@@ -6,7 +6,7 @@ import type { BotDatabase, SessionChat } from '../database';
 import type { FeishuClient, MessageEvent } from '../feishu/client';
 import { parseTextContent, cleanMentionsFromText, parseImageContent } from '../feishu/client';
 import type { OpencodeWrapper, OpencodeEventData, ImageAttachment } from '../opencode/client';
-import { extractTextFromPart, extractToolCallFromPart } from '../opencode/client';
+import { extractTextFromPart, extractToolCallFromPart, parseModelId } from '../opencode/client';
 import { CardStreamer, createCardStreamer } from '../feishu/streamer';
 import { formatError } from '../feishu/formatter';
 import { createQuestionCard, createAnsweredCard, type QuestionRequest, type QuestionInfo } from '../feishu/question-card';
@@ -173,8 +173,15 @@ export class SessionManager {
   }
 
   private async processMessage(chatId: string, senderId: string, userMessageId: string, text: string, images: ImageAttachment[], sessionChat?: SessionChat): Promise<void> {
+    const isShellCommand = text.startsWith('!');
+    const isSlashCommand = text.startsWith('/');
+    
+    const cardTitle = isShellCommand || isSlashCommand
+      ? `执行 ${text.slice(0, 30)}${text.length > 30 ? '...' : ''}`
+      : '思考中...';
+    
     const streamer = createCardStreamer(this.feishuClient, chatId);
-    streamer.setTitle('思考中...');
+    streamer.setTitle(cardTitle);
     await streamer.start();
     
     let sessionId: string;
@@ -204,7 +211,21 @@ export class SessionManager {
       );
       activeSession.unsubscribe = unsubscribe;
 
-      await this.opencodeClient.sendPrompt(sessionId, text, images.length > 0 ? images : undefined);
+      if (isShellCommand) {
+        const shellCommand = text.slice(1);
+        const agents = await this.opencodeClient.listAgents();
+        const primaryAgent = agents.find(a => a.mode === 'primary')?.name ?? agents[0]?.name ?? 'default';
+        const modelId = sessionChat?.model;
+        const model = modelId ? parseModelId(modelId) : undefined;
+        await this.opencodeClient.executeShell(sessionId, shellCommand, primaryAgent, model ?? undefined);
+      } else if (isSlashCommand) {
+        const spaceIndex = text.indexOf(' ');
+        const command = spaceIndex > 0 ? text.slice(1, spaceIndex) : text.slice(1);
+        const args = spaceIndex > 0 ? text.slice(spaceIndex + 1) : '';
+        await this.opencodeClient.executeCommand(sessionId, command, args);
+      } else {
+        await this.opencodeClient.sendPrompt(sessionId, text, images.length > 0 ? images : undefined);
+      }
       
     } catch (error) {
       logger.error('发送提示时出错', { chatId, sessionId, error });
