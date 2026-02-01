@@ -3,7 +3,7 @@
  * 实现节流的卡片内容更新，用于流式响应
  */
 import type { FeishuClient } from './client';
-import { buildStreamingCard, buildStreamingCardsV2, type FeishuCard, type OrderedPart } from './formatter';
+import { buildStreamingCard, buildStreamingCardsV2, type FeishuCard, type OrderedPart, type SubtaskMetadata } from './formatter';
 import { logger } from '../utils/logger';
 
 const DEFAULT_THROTTLE_MS = 500;
@@ -49,8 +49,8 @@ export class CardStreamer {
     if (this.messageIds.length > 0) return;
     
     const cards = this.useV2 
-      ? buildStreamingCardsV2([], false, this.title ?? '思考中...').cards
-      : [buildStreamingCard('', false, this.title ?? '思考中...')];
+      ? buildStreamingCardsV2([], false, this.title ?? '处理中...').cards
+      : [buildStreamingCard('', false, this.title ?? '处理中...')];
     
     const card = cards[0];
     if (!card) return;
@@ -85,7 +85,7 @@ export class CardStreamer {
     await this.scheduleUpdate();
   }
 
-  async setParts(parts: Array<{ type: string; text?: string; name?: string; state?: string; title?: string; input?: Record<string, unknown>; output?: string; error?: string }>): Promise<void> {
+  async setParts(parts: Array<{ type: string; text?: string; name?: string; state?: string; title?: string; input?: Record<string, unknown>; output?: string; error?: string; time?: { start: number; end?: number }; subtask?: SubtaskMetadata }>): Promise<void> {
     this.orderedParts = parts.map(p => ({
       type: p.type as 'text' | 'reasoning' | 'tool-call',
       text: p.text,
@@ -95,6 +95,8 @@ export class CardStreamer {
       input: p.input,
       output: p.output,
       error: p.error,
+      time: p.time,
+      subtask: p.subtask,
     }));
     this.useV2 = true;
     await this.scheduleUpdate();
@@ -217,11 +219,22 @@ export class CardStreamer {
       this.pendingUpdate = null;
     }
     
+    // 等待正在进行的更新完成
     while (this.isUpdating) {
       await sleep(50);
     }
     
+    // 强制刷新最终状态，确保所有待处理数据都被更新
+    // 多次调用以确保任何在等待期间到达的数据都被处理
     await this.flush();
+    
+    // 如果在 flush 期间有新数据到达，再刷新一次
+    if (this.hasPendingData) {
+      while (this.isUpdating) {
+        await sleep(50);
+      }
+      await this.flush();
+    }
   }
 
   async sendError(errorMessage: string): Promise<void> {
@@ -282,6 +295,11 @@ export class CardStreamer {
 
   getContent(): string {
     return this.buffer;
+  }
+
+  isSubAgentTool(toolName: string): boolean {
+    const subAgentTools = ['delegate_task', 'task'];
+    return subAgentTools.includes(toolName.toLowerCase());
   }
 
   reset(): void {

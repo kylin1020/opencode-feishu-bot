@@ -101,8 +101,10 @@ export class OpencodeWrapper {
   }
 
   /** 发送提示消息 */
-  async sendPrompt(sessionId: string, prompt: string, images?: ImageAttachment[]): Promise<void> {
+  async sendPrompt(sessionId: string, prompt: string, images?: ImageAttachment[], model?: { providerID: string; modelID: string }): Promise<void> {
     const client = this.ensureClient();
+    
+    logger.info('OpenCode sendPrompt', { sessionId, model, hasImages: images && images.length > 0 });
     
     const parts: Array<
       | { type: 'text'; text: string }
@@ -127,7 +129,7 @@ export class OpencodeWrapper {
     await client.session.promptAsync({
       path: { id: sessionId },
       query: { directory: this.directory },
-      body: { parts },
+      body: { parts, model },
     });
   }
 
@@ -153,6 +155,7 @@ export class OpencodeWrapper {
   ): Promise<() => void> {
     const client = this.ensureClient();
     const abortController = new AbortController();
+    const childSessionIds = new Set<string>();
     
     const eventResult = await client.event.subscribe({
       query: { directory: this.directory },
@@ -173,9 +176,18 @@ export class OpencodeWrapper {
           const info = eventInfo.info as Record<string, unknown> | undefined;
           const part = eventInfo.part as Record<string, unknown> | undefined;
           
-          const eventSessionId = eventInfo.sessionID ?? part?.sessionID ?? info?.id ?? info?.sessionID;
+          const eventSessionId = (eventInfo.sessionID ?? part?.sessionID ?? info?.id ?? info?.sessionID) as string | undefined;
+          const parentId = info?.parentID as string | undefined;
           
-          if (eventSessionId === sessionId || !eventSessionId) {
+          if (event.type === 'session.created' && parentId === sessionId && info?.id) {
+            childSessionIds.add(info.id as string);
+          }
+          
+          const isMainSession = eventSessionId === sessionId || !eventSessionId;
+          const isChildSession = eventSessionId && childSessionIds.has(eventSessionId);
+          const isNewChildSession = parentId === sessionId;
+          
+          if (isMainSession || isChildSession || isNewChildSession) {
             callback({
               type: event.type,
               properties: properties as Record<string, unknown>,
@@ -235,6 +247,41 @@ export class OpencodeWrapper {
       return true;
     } catch (error) {
       logger.error('执行命令失败', { command, error });
+      return false;
+    }
+  }
+
+  async executeShell(sessionId: string, command: string, model?: { providerID: string; modelID: string }): Promise<boolean> {
+    try {
+      const client = this.ensureClient();
+      logger.info('OpenCode executeShell', { sessionId, command: command.slice(0, 50), model });
+      await client.session.shell({
+        path: { id: sessionId },
+        query: { directory: this.directory },
+        body: {
+          command,
+          agent: 'build',
+          model,
+        },
+      });
+      return true;
+    } catch (error) {
+      logger.error('执行 shell 命令失败', { command, error });
+      return false;
+    }
+  }
+
+  async summarizeSession(sessionId: string, model?: { providerID: string; modelID: string }): Promise<boolean> {
+    try {
+      const client = this.ensureClient();
+      await client.session.summarize({
+        path: { id: sessionId },
+        query: { directory: this.directory },
+        body: model,
+      });
+      return true;
+    } catch (error) {
+      logger.error('压缩会话上下文失败', { sessionId, error });
       return false;
     }
   }
@@ -317,7 +364,6 @@ export class OpencodeWrapper {
 
   async replyQuestion(requestId: string, answers: string[][]): Promise<boolean> {
     if (!this.serverUrl) {
-      logger.error('回复问题失败：服务器未启动');
       return false;
     }
     try {
@@ -356,6 +402,36 @@ export class OpencodeWrapper {
       return false;
     }
   }
+
+  /** 获取子会话列表 */
+  async getChildSessions(parentSessionId: string): Promise<ChildSession[]> {
+    try {
+      const client = this.ensureClient();
+      const response = await client.session.children({
+        path: { id: parentSessionId },
+        query: { directory: this.directory },
+      });
+      return (response.data ?? []) as ChildSession[];
+    } catch (error) {
+      logger.error('获取子会话列表失败', error);
+      return [];
+    }
+  }
+
+  /** 获取会话详情（包含摘要信息） */
+  async getSessionDetail(sessionId: string): Promise<SessionDetail | null> {
+    try {
+      const client = this.ensureClient();
+      const response = await client.session.get({
+        path: { id: sessionId },
+        query: { directory: this.directory },
+      });
+      return response.data as SessionDetail | null;
+    } catch (error) {
+      logger.error('获取会话详情失败', error);
+      return null;
+    }
+  }
 }
 
 /** 创建 OpenCode 封装实例 */
@@ -390,9 +466,9 @@ export interface ToolCallInfo {
   input?: Record<string, unknown>;
   output?: string;
   error?: string;
+  time?: { start: number; end?: number };
 }
 
-/** 从消息部分提取工具调用 */
 export function extractToolCallFromPart(part: unknown): ToolCallInfo | null {
   if (!part || typeof part !== 'object') return null;
   
@@ -405,6 +481,7 @@ export function extractToolCallFromPart(part: unknown): ToolCallInfo | null {
       input?: Record<string, unknown>;
       output?: string;
       error?: string;
+      time?: { start: number; end?: number };
     } | undefined;
     
     return {
@@ -414,6 +491,35 @@ export function extractToolCallFromPart(part: unknown): ToolCallInfo | null {
       input: stateObj?.input,
       output: stateObj?.output,
       error: stateObj?.error,
+      time: stateObj?.time,
+    };
+  }
+  
+  return null;
+}
+
+export interface SubtaskInfo {
+  id: string;
+  sessionID: string;
+  messageID: string;
+  prompt: string;
+  description: string;
+  agent: string;
+}
+
+export function extractSubtaskFromPart(part: unknown): SubtaskInfo | null {
+  if (!part || typeof part !== 'object') return null;
+  
+  const p = part as Record<string, unknown>;
+  
+  if (p.type === 'subtask') {
+    return {
+      id: p.id as string,
+      sessionID: p.sessionID as string,
+      messageID: p.messageID as string,
+      prompt: (p.prompt as string) ?? '',
+      description: (p.description as string) ?? '',
+      agent: (p.agent as string) ?? 'agent',
     };
   }
   
@@ -421,3 +527,62 @@ export function extractToolCallFromPart(part: unknown): ToolCallInfo | null {
 }
 
 export { type Event, type TextPart, type ReasoningPart, type ToolPart, type Message };
+
+export interface ModelSelection {
+  providerID: string;
+  modelID: string;
+}
+
+export interface FileDiff {
+  file: string;
+  before: string;
+  after: string;
+  additions: number;
+  deletions: number;
+}
+
+export interface SessionSummary {
+  additions: number;
+  deletions: number;
+  files: number;
+  diffs?: FileDiff[];
+}
+
+export interface ChildSession {
+  id: string;
+  projectID: string;
+  directory: string;
+  parentID?: string;
+  title: string;
+  summary?: SessionSummary;
+  time: {
+    created: number;
+    updated: number;
+  };
+}
+
+export interface SessionDetail {
+  id: string;
+  projectID: string;
+  directory: string;
+  parentID?: string;
+  title: string;
+  summary?: SessionSummary;
+  time: {
+    created: number;
+    updated: number;
+    compacting?: number;
+  };
+}
+
+export function parseModelId(modelId: string): ModelSelection | null {
+  const slashIndex = modelId.indexOf('/');
+  if (slashIndex === -1) return null;
+  
+  const providerID = modelId.substring(0, slashIndex);
+  const modelID = modelId.substring(slashIndex + 1);
+  
+  if (!providerID || !modelID) return null;
+  
+  return { providerID, modelID };
+}

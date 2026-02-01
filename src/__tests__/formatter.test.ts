@@ -9,6 +9,8 @@ import {
   truncateContent,
   formatMessageParts,
   buildStreamingCard,
+  buildStreamingCardsV2,
+  type OrderedPart,
 } from '../feishu/formatter';
 
 describe('Formatter', () => {
@@ -208,6 +210,166 @@ describe('Formatter', () => {
       const card = buildStreamingCard('Content', false, 'Custom Title');
       
       expect(card.header?.title.content).toBe('Custom Title');
+    });
+  });
+
+  describe('buildStreamingCardsV2 - Special Tool Formatting', () => {
+    test('formats todowrite tool as checklist', () => {
+      const parts: OrderedPart[] = [{
+        type: 'tool-call',
+        name: 'todowrite',
+        state: 'completed',
+        input: {
+          todos: [
+            { id: '1', content: 'Task 1', status: 'completed', priority: 'high' },
+            { id: '2', content: 'Task 2', status: 'in_progress', priority: 'medium' },
+            { id: '3', content: 'Task 3', status: 'pending', priority: 'low' },
+          ],
+        },
+      }];
+      
+      const result = buildStreamingCardsV2(parts, true);
+      const cardBody = (result.cards[0] as { body: { elements: object[] } }).body;
+      const panelElement = cardBody.elements[0] as { elements: object[] };
+      const content = (panelElement.elements[0] as { content: string }).content;
+      
+      expect(content).toContain('✅');
+      expect(content).toContain('🔄');
+      expect(content).toContain('⬜');
+      expect(content).toContain('~~Task 1~~');
+      expect(content).toContain('Task 2');
+    });
+
+    test('formats edit tool as diff view', () => {
+      const parts: OrderedPart[] = [{
+        type: 'tool-call',
+        name: 'edit',
+        state: 'completed',
+        input: {
+          filePath: '/path/to/file.ts',
+          oldString: 'const x = 1;',
+          newString: 'const x = 2;',
+        },
+      }];
+      
+      const result = buildStreamingCardsV2(parts, true);
+      const cardBody = (result.cards[0] as { body: { elements: object[] } }).body;
+      const panelElement = cardBody.elements[0] as { elements: object[] };
+      
+      const filePathContent = (panelElement.elements[0] as { content: string }).content;
+      expect(filePathContent).toContain('/path/to/file.ts');
+      
+      const diffContent = (panelElement.elements[1] as { content: string }).content;
+      expect(diffContent).toContain('- const x = 1;');
+      expect(diffContent).toContain('+ const x = 2;');
+    });
+
+    test('formats bash tool with command and output', () => {
+      const parts: OrderedPart[] = [{
+        type: 'tool-call',
+        name: 'bash',
+        state: 'completed',
+        input: {
+          command: 'ls -la',
+          description: 'List files',
+        },
+        output: 'file1.txt\nfile2.txt',
+      }];
+      
+      const result = buildStreamingCardsV2(parts, true);
+      const cardBody = (result.cards[0] as { body: { elements: object[] } }).body;
+      const panelElement = cardBody.elements[0] as { elements: object[] };
+      
+      const elements = panelElement.elements.map((e: { content?: string }) => e.content ?? '').join('\n');
+      expect(elements).toContain('List files');
+      expect(elements).toContain('$ ls -la');
+      expect(elements).toContain('file1.txt');
+    });
+
+    test('formats glob tool with search results', () => {
+      const parts: OrderedPart[] = [{
+        type: 'tool-call',
+        name: 'glob',
+        state: 'completed',
+        input: {
+          pattern: '**/*.ts',
+          path: '/src',
+        },
+        output: 'file1.ts\nfile2.ts\nfile3.ts',
+      }];
+      
+      const result = buildStreamingCardsV2(parts, true);
+      const cardBody = (result.cards[0] as { body: { elements: object[] } }).body;
+      const panelElement = cardBody.elements[0] as { elements: object[] };
+      
+      const elements = panelElement.elements.map((e: { content?: string }) => e.content ?? '').join('\n');
+      expect(elements).toContain('**/*.ts');
+      expect(elements).toContain('找到 3 个结果');
+    });
+
+    test('formats delegate_task tool with agent info', () => {
+      const parts: OrderedPart[] = [{
+        type: 'tool-call',
+        name: 'delegate_task',
+        state: 'running',
+        input: {
+          description: 'Analyze codebase',
+          subagent_type: 'explore',
+          run_in_background: true,
+        },
+      }];
+      
+      const result = buildStreamingCardsV2(parts, false);
+      const cardBody = (result.cards[0] as { body: { elements: object[] } }).body;
+      const panelElement = cardBody.elements[0] as { elements: object[] };
+      
+      const allContent = panelElement.elements.map((e: { content?: string }) => e.content ?? '').join('\n');
+      expect(allContent).toContain('explore');
+      expect(allContent).toContain('Analyze codebase');
+      expect(allContent).toContain('后台运行');
+    });
+
+    test('background delegate_task shows pending status when just launched', () => {
+      const parts: OrderedPart[] = [{
+        type: 'tool-call',
+        name: 'delegate_task',
+        state: 'completed',
+        input: {
+          description: 'Search news',
+          subagent_type: 'librarian',
+          run_in_background: true,
+        },
+        output: 'Background task launched.\nTask ID: bg_123',
+      }];
+      
+      const result = buildStreamingCardsV2(parts, false);
+      const cardBody = (result.cards[0] as { body: { elements: object[] } }).body;
+      const panelElement = cardBody.elements[0] as { header: { title: { content: string } }; elements: object[] };
+      
+      expect(panelElement.header.title.content).toContain('⏳');
+      expect(panelElement.header.title.content).not.toContain('✅');
+      
+      const allContent = panelElement.elements.map((e: { content?: string }) => e.content ?? '').join('\n');
+      expect(allContent).toContain('执行中');
+      expect(allContent).toContain('后台运行');
+    });
+
+    test('falls back to generic format for unknown tools', () => {
+      const parts: OrderedPart[] = [{
+        type: 'tool-call',
+        name: 'unknown_tool',
+        state: 'completed',
+        input: { param1: 'value1' },
+        output: 'some output',
+      }];
+      
+      const result = buildStreamingCardsV2(parts, true);
+      const cardBody = (result.cards[0] as { body: { elements: object[] } }).body;
+      const panelElement = cardBody.elements[0] as { elements: object[] };
+      
+      const elements = panelElement.elements.map((e: { content?: string }) => e.content ?? '').join('\n');
+      expect(elements).toContain('param1');
+      expect(elements).toContain('some output');
     });
   });
 });

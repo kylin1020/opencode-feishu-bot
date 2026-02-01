@@ -144,6 +144,9 @@ export class CommandHandler {
         case 'clear':
           return await this.handleClear(context);
         
+        case 'exit':
+          return await this.handleExit(context);
+        
         case 'whitelist_add':
           return await this.handleWhitelistAdd(args, context);
         
@@ -152,6 +155,12 @@ export class CommandHandler {
         
         case 'whitelist_list':
           return await this.handleWhitelistList(context);
+        
+        case 'doc_read':
+          return await this.handleDocRead(rawArgs, context);
+        
+        case 'doc_create':
+          return await this.handleDocCreate(rawArgs, context);
         
         default:
           return {
@@ -354,6 +363,7 @@ export class CommandHandler {
         projects: this.projects,
         chatId: result.chatId,
         models: await this.getModels(),
+        currentModel: this.sessionManager.getDefaultModel(),
       });
       await this.feishuClient.sendCard(result.chatId, welcomeCard);
       
@@ -429,6 +439,7 @@ export class CommandHandler {
       projects: this.projects,
       chatId: result.chatId,
       models: await this.getModels(),
+      currentModel: this.sessionManager.getDefaultModel(),
     });
     await this.feishuClient.sendCard(result.chatId, welcomeCard);
 
@@ -479,29 +490,22 @@ export class CommandHandler {
       };
     }
 
-    const session = this.db.getSession(context.chatId);
-    if (!session) {
-      return {
-        success: false,
-        message: formatCommandError('请先发送消息创建会话'),
-        handled: true,
-      };
-    }
-
-    const success = await this.opencodeClient.executeCommand(session.session_id, 'model', selectedModel.id);
-    if (success) {
+    const sessionChat = this.sessionManager.getSessionChat(context.chatId);
+    if (sessionChat) {
+      logger.info('切换模型', { chatId: context.chatId, oldModel: sessionChat.model, newModel: selectedModel.id });
+      this.sessionManager.updateSessionChatModel(context.chatId, selectedModel.id);
       return {
         success: true,
         message: formatCommandSuccess(`已切换到模型：${selectedModel.name}`),
         handled: true,
       };
-    } else {
-      return {
-        success: false,
-        message: formatCommandError('切换模型失败'),
-        handled: true,
-      };
     }
+
+    return {
+      success: false,
+      message: formatCommandError('仅支持在会话群中切换模型'),
+      handled: true,
+    };
   }
 
   private async handleCompact(context: CommandContext): Promise<CommandResult> {
@@ -535,6 +539,83 @@ export class CommandHandler {
     return {
       success: true,
       message: formatCommandSuccess(`历史已清除，新会话：${sessionId.slice(0, 8)}...`),
+      handled: true,
+    };
+  }
+
+  private async handleExit(context: CommandContext): Promise<CommandResult> {
+    const sessionChat = this.sessionManager.getSessionChat(context.chatId);
+    if (!sessionChat) {
+      return {
+        success: false,
+        message: formatCommandError('此命令仅在会话群中可用'),
+        handled: true,
+      };
+    }
+
+    this.sessionManager.cleanupSessionChat(context.chatId);
+    await this.feishuClient.deleteChat(context.chatId);
+    
+    return {
+      success: true,
+      message: '',
+      handled: true,
+    };
+  }
+
+  private async handleDocRead(urlOrToken: string, context: CommandContext): Promise<CommandResult> {
+    if (!urlOrToken.trim()) {
+      return {
+        success: false,
+        message: formatCommandError('请提供文档URL或token。用法：/doc_read <文档URL或token>'),
+        handled: true,
+      };
+    }
+
+    const result = await this.feishuClient.readDocument(urlOrToken.trim());
+    
+    if (!result.success || !result.data) {
+      return {
+        success: false,
+        message: formatCommandError(result.error || '读取文档失败'),
+        handled: true,
+      };
+    }
+
+    const title = result.data.title ? `**${result.data.title}**\n\n` : '';
+    const content = result.data.content.length > 2000 
+      ? result.data.content.slice(0, 2000) + '\n\n... (内容过长，已截断)'
+      : result.data.content;
+    
+    return {
+      success: true,
+      message: `${title}${content}`,
+      handled: true,
+    };
+  }
+
+  private async handleDocCreate(title: string, context: CommandContext): Promise<CommandResult> {
+    if (!title.trim()) {
+      return {
+        success: false,
+        message: formatCommandError('请提供文档标题。用法：/doc_create <标题>'),
+        handled: true,
+      };
+    }
+
+    const result = await this.feishuClient.createDocument({ title: title.trim() });
+    
+    if (!result.success || !result.data) {
+      return {
+        success: false,
+        message: formatCommandError(result.error || '创建文档失败'),
+        handled: true,
+      };
+    }
+
+    return {
+      success: true,
+      message: formatCommandSuccess(`文档创建成功\n标题：${result.data.title}\n链接：${result.data.url}`),
       handled: true,
     };
   }

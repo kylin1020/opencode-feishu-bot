@@ -36,14 +36,29 @@ CREATE TABLE IF NOT EXISTS session_chats (
   session_id TEXT NOT NULL,
   owner_id TEXT NOT NULL,
   project_path TEXT NOT NULL,
+  model TEXT,
   title TEXT,
   title_set BOOLEAN DEFAULT FALSE,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+
+
 CREATE INDEX IF NOT EXISTS idx_event_dedup_processed_at ON event_dedup(processed_at);
 CREATE INDEX IF NOT EXISTS idx_message_mappings_chat_id ON message_mappings(chat_id);
 CREATE INDEX IF NOT EXISTS idx_message_mappings_created_at ON message_mappings(created_at);
 CREATE INDEX IF NOT EXISTS idx_session_chats_owner_id ON session_chats(owner_id);
 CREATE INDEX IF NOT EXISTS idx_session_chats_session_id ON session_chats(session_id);
+
+-- 待处理问题：存储问题卡片状态，支持服务重启后恢复
+CREATE TABLE IF NOT EXISTS pending_questions (
+  chat_id TEXT PRIMARY KEY,
+  request_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  questions TEXT NOT NULL,  -- JSON 格式的问题数组
+  answers TEXT NOT NULL,    -- JSON 格式的答案数组
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_questions_request_id ON pending_questions(request_id);

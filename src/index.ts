@@ -88,6 +88,7 @@ async function main(): Promise<void> {
     opencodeClient,
     {
       defaultProjectPath,
+      defaultModel,
       adminUserIds,
       allowAllUsers: config.allowAllUsers,
     }

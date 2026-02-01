@@ -5,6 +5,12 @@
 app_id = "cli_xxxxxxxxxxxx"
 app_secret = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
+[feishu.docs]
+# 默认文档存储文件夹 token（云空间文件夹）
+# default_folder_token = "fldcnxxxxxxxxxxxxxxx"
+# 知识库 space_id（可选，用于知识库模式）
+# wiki_space_id = "xxxxxxx"
+
 [admin]
 # 管理员用户 open_id 列表
 user_ids = ["ou_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"]

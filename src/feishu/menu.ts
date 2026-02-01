@@ -1,4 +1,5 @@
 import type { ProjectConfig } from '../config';
+import { type CardTemplate, colors } from './design-tokens';
 
 export type MenuAction = 
   | 'new_session'
@@ -13,14 +14,7 @@ export interface ModelInfo {
   name: string;
 }
 
-const HEADER_COLORS = {
-  blue: 'blue',
-  green: 'green',
-  orange: 'orange',
-  red: 'red',
-} as const;
-
-function createHeader(title: string, color: keyof typeof HEADER_COLORS = 'blue') {
+function createHeader(title: string, color: CardTemplate = colors.primary) {
   return {
     template: color,
     title: { tag: 'plain_text', content: title },
@@ -73,7 +67,7 @@ export function createProjectSelectCard(projects: ProjectConfig[], description?:
   };
 }
 
-export function createModelSelectCard(models: ModelInfo[], currentModel?: string): object {
+export function createModelSelectCard(models: ModelInfo[], currentModel?: string, chatId?: string): object {
   const elements: object[] = [];
 
   if (models.length === 0) {
@@ -94,16 +88,24 @@ export function createModelSelectCard(models: ModelInfo[], currentModel?: string
     value: m.id,
   }));
 
+  const currentModelInfo = currentModel 
+    ? models.find(m => m.id === currentModel)
+    : undefined;
+
+  const modelSelect: Record<string, unknown> = {
+    tag: 'select_static',
+    placeholder: { tag: 'plain_text', content: '选择模型' },
+    value: { action: 'switch_model', chatId },
+    options,
+  };
+
+  if (currentModelInfo) {
+    modelSelect.initial_option = currentModelInfo.id;
+  }
+
   elements.push({
     tag: 'action',
-    actions: [
-      {
-        tag: 'select_static',
-        placeholder: { tag: 'plain_text', content: '选择模型' },
-        value: { action: 'switch_model' },
-        options,
-      },
-    ],
+    actions: [modelSelect],
   });
 
   return {
@@ -201,24 +203,40 @@ export function createSuccessCard(title: string, message: string): object {
 }
 
 export function createSessionChatCreatedCard(chatId: string, sessionId: string, projectPath: string): object {
-  const chatName = `o-${sessionId}`;
+  const shortSessionId = sessionId.replace(/^ses_/, '').slice(0, 8);
   const chatLink = `https://applink.feishu.cn/client/chat/open?openChatId=${chatId}`;
+  const projectName = projectPath.split('/').pop() || projectPath;
   
   return {
     config: { wide_screen_mode: true },
-    header: createHeader('✅ 会话群已创建', 'green'),
+    header: {
+      title: { tag: 'plain_text', content: '🎉 会话群已创建' },
+      template: 'green',
+    },
     elements: [
-      createMarkdown(`**群名称**: ${chatName}\n**项目**: \`${projectPath}\``),
+      {
+        tag: 'div',
+        text: { tag: 'lark_md', content: `**📁 项目**：${projectName}\n**🔑 会话**：\`${shortSessionId}\`` },
+      },
+      {
+        tag: 'markdown',
+        content: `路径：\`${projectPath}\``,
+      },
+      { tag: 'hr' },
       {
         tag: 'action',
         actions: [
           {
             tag: 'button',
-            text: { tag: 'plain_text', content: '进入会话群' },
+            text: { tag: 'plain_text', content: '🚀 进入会话群' },
             type: 'primary',
             url: chatLink,
           },
         ],
+      },
+      {
+        tag: 'note',
+        elements: [{ tag: 'plain_text', content: '进入群组后，直接发送消息即可与 AI 对话' }],
       },
     ],
   };
@@ -243,25 +261,30 @@ export interface SessionChatWelcomeInfo {
 
 export function createSessionChatWelcomeCard(info: SessionChatWelcomeInfo): object {
   const shortSessionId = info.sessionId.replace(/^ses_/, '').slice(0, 8);
+  const projectName = info.projectPath.split('/').pop() || info.projectPath;
+  const currentModelName = info.currentModel 
+    ? info.models.find(m => m.id === info.currentModel)?.name || info.currentModel.split('/').pop()
+    : '默认模型';
+  
   const elements: object[] = [];
 
-  elements.push(createMarkdown(
-    `**当前状态**\n` +
-    `- 📁 工作目录：\`${info.projectPath}\`\n` +
-    `- 🔑 会话 ID：\`${shortSessionId}\``
-  ));
+  elements.push({
+    tag: 'div',
+    text: { 
+      tag: 'lark_md', 
+      content: `📁 **项目**：${projectName}　　🤖 **模型**：${currentModelName}　　🔑 **会话**：\`${shortSessionId}\`` 
+    },
+  });
 
-  elements.push(createDivider());
-
-  const actions: object[] = [];
+  const settingsActions: object[] = [];
 
   if (info.projects.length > 0) {
     const projectOptions = info.projects.map(p => ({
-      text: { tag: 'plain_text', content: `${p.name}` },
+      text: { tag: 'plain_text', content: p.name },
       value: p.path,
     }));
 
-    actions.push({
+    settingsActions.push({
       tag: 'select_static',
       placeholder: { tag: 'plain_text', content: '📂 切换项目' },
       value: { action: 'switch_project_in_chat', chatId: info.chatId },
@@ -271,40 +294,56 @@ export function createSessionChatWelcomeCard(info: SessionChatWelcomeInfo): obje
 
   if (info.models.length > 0) {
     const modelOptions = info.models.map(m => ({
-      text: { tag: 'plain_text', content: m.name },
+      text: { tag: 'plain_text', content: m.name.length > 25 ? m.name.slice(0, 25) + '...' : m.name },
       value: m.id,
     }));
 
-    actions.push({
+    const currentModelInfo = info.currentModel 
+      ? info.models.find(m => m.id === info.currentModel)
+      : undefined;
+
+    const modelSelect: Record<string, unknown> = {
       tag: 'select_static',
-      placeholder: { tag: 'plain_text', content: info.currentModel ? `🤖 ${info.currentModel}` : '🤖 切换模型' },
+      placeholder: { tag: 'plain_text', content: '🤖 切换模型' },
       value: { action: 'switch_model', chatId: info.chatId },
       options: modelOptions,
-    });
+    };
+
+    if (currentModelInfo) {
+      modelSelect.initial_option = currentModelInfo.id;
+    }
+
+    settingsActions.push(modelSelect);
   }
 
-  if (actions.length > 0) {
+  if (settingsActions.length > 0) {
+    elements.push({ tag: 'hr' });
     elements.push({
       tag: 'action',
-      actions,
+      actions: settingsActions,
     });
   }
 
-  if (info.projects.length === 0) {
-    elements.push(createMarkdown(
-      '💡 切换目录：`/switch_project <路径>`'
-    ));
-  }
+  elements.push({ tag: 'hr' });
+  elements.push({
+    tag: 'markdown',
+    content: [
+      '**💡 常用命令**',
+      '`/abort` 中止任务　`/clear` 清除历史　`/compact` 压缩上下文　`/status` 查看状态',
+    ].join('\n'),
+  });
 
-  elements.push(createDivider());
   elements.push({
     tag: 'note',
-    elements: [{ tag: 'plain_text', content: '⚡ 发送任何消息即可开始对话' }],
+    elements: [{ tag: 'plain_text', content: '⚡ 直接发送消息即可开始对话，无需 @机器人' }],
   });
 
   return {
     config: { wide_screen_mode: true },
-    header: createHeader('🎉 会话群已就绪', 'green'),
+    header: {
+      title: { tag: 'plain_text', content: '🚀 会话已就绪' },
+      template: 'blue',
+    },
     elements,
   };
 }
@@ -328,6 +367,7 @@ export interface QuickActionsInfo {
   chatId: string;
   projects: ProjectConfig[];
   models: ModelInfo[];
+  currentModel?: string;
 }
 
 function createActionButton(text: string, action: string, chatId: string, type: 'default' | 'primary' | 'danger' = 'default') {
@@ -340,7 +380,7 @@ function createActionButton(text: string, action: string, chatId: string, type: 
 }
 
 export function createQuickActionsCard(info: QuickActionsInfo): object {
-  const { chatId, projects, models } = info;
+  const { chatId, projects, models, currentModel } = info;
   const elements: object[] = [];
 
   elements.push(createMarkdown('**📝 会话操作**'));
@@ -371,12 +411,23 @@ export function createQuickActionsCard(info: QuickActionsInfo): object {
       text: { tag: 'plain_text', content: m.name.length > 20 ? m.name.slice(0, 20) + '...' : m.name },
       value: m.id,
     }));
-    settingsActions.push({
+
+    const currentModelInfo = currentModel 
+      ? models.find(m => m.id === currentModel)
+      : undefined;
+
+    const modelSelect: Record<string, unknown> = {
       tag: 'select_static',
       placeholder: { tag: 'plain_text', content: '🤖 切换模型' },
       value: { action: 'switch_model', chatId },
       options: modelOptions,
-    });
+    };
+
+    if (currentModelInfo) {
+      modelSelect.initial_option = currentModelInfo.id;
+    }
+
+    settingsActions.push(modelSelect);
   }
 
   if (projects.length > 0) {

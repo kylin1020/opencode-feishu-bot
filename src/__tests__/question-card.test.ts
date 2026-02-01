@@ -1,8 +1,8 @@
 import { describe, test, expect } from 'bun:test';
-import { createQuestionCard, createAnsweredCard, createQuestionErrorCard, type QuestionRequest } from '../feishu/question-card';
+import { createQuestionCard, createAnsweredCard, createQuestionErrorCard, createMultiAnsweredCard, type QuestionRequest } from '../feishu/question-card';
 
-describe('createQuestionCard', () => {
-  test('renders buttons for ≤3 options (single select)', () => {
+describe('createQuestionCard (Form Mode)', () => {
+  test('renders select for single question', () => {
     const request: QuestionRequest = {
       id: 'req-1',
       sessionID: 'ses-1',
@@ -19,45 +19,24 @@ describe('createQuestionCard', () => {
     const card = createQuestionCard(request);
     
     const json = JSON.stringify(card);
-    expect(json).toContain('"tag":"button"');
+    expect(json).toContain('"schema":"2.0"');
+    expect(json).toContain('"tag":"form"');
+    expect(json).toContain('"tag":"select_static"');
     expect(json).toContain('OAuth');
     expect(json).toContain('JWT');
-    expect(json).not.toContain('"tag":"select_static"');
+    expect(json).toContain('提交答案');
   });
 
-  test('renders dropdown for >3 options (single select)', () => {
+  test('renders multi_select for multiple choice question', () => {
     const request: QuestionRequest = {
       id: 'req-1',
       sessionID: 'ses-1',
       questions: [{
-        question: '选择数据库？',
-        header: '数据库',
+        question: '选择工具？',
+        header: '工具',
         options: [
-          { label: 'MySQL', description: '' },
-          { label: 'PostgreSQL', description: '' },
-          { label: 'SQLite', description: '' },
-          { label: 'MongoDB', description: '' },
-        ],
-        multiple: false,
-      }],
-    };
-    const card = createQuestionCard(request);
-    
-    const json = JSON.stringify(card);
-    expect(json).toContain('"tag":"select_static"');
-    expect(json).not.toContain('"tag":"button"');
-  });
-
-  test('renders dropdown for multiple select even with ≤3 options', () => {
-    const request: QuestionRequest = {
-      id: 'req-1',
-      sessionID: 'ses-1',
-      questions: [{
-        question: '选择功能？',
-        header: '功能',
-        options: [
-          { label: '认证', description: '' },
-          { label: '日志', description: '' },
+          { label: 'Docker', description: '' },
+          { label: 'Git', description: '' },
         ],
         multiple: true,
       }],
@@ -65,8 +44,50 @@ describe('createQuestionCard', () => {
     const card = createQuestionCard(request);
     
     const json = JSON.stringify(card);
-    expect(json).toContain('"tag":"select_static"');
-    expect(json).toContain('可多选');
+    expect(json).toContain('"tag":"multi_select_static"');
+  });
+
+  test('includes form with question names', () => {
+    const request: QuestionRequest = {
+      id: 'req-123',
+      sessionID: 'ses-1',
+      questions: [{
+        question: '问题',
+        header: '标题',
+        options: [{ label: 'A', description: '' }],
+      }],
+    };
+    const card = createQuestionCard(request);
+    
+    const json = JSON.stringify(card);
+    expect(json).toContain('"name":"q_0"');
+    expect(json).toContain('question_form_req-123');
+  });
+
+  test('renders multiple questions in form', () => {
+    const request: QuestionRequest = {
+      id: 'req-1',
+      sessionID: 'ses-1',
+      questions: [
+        {
+          question: '问题1',
+          header: '第一个',
+          options: [{ label: 'A', description: '' }],
+        },
+        {
+          question: '问题2',
+          header: '第二个',
+          options: [{ label: 'X', description: '' }, { label: 'Y', description: '' }],
+        },
+      ],
+    };
+    const card = createQuestionCard(request);
+    
+    const json = JSON.stringify(card);
+    expect(json).toContain('问题 1');
+    expect(json).toContain('问题 2');
+    expect(json).toContain('"name":"q_0"');
+    expect(json).toContain('"name":"q_1"');
   });
 
   test('includes custom answer hint', () => {
@@ -101,24 +122,6 @@ describe('createQuestionCard', () => {
     expect(json).toContain('"template":"orange"');
   });
 
-  test('includes requestId and questionIndex in action value', () => {
-    const request: QuestionRequest = {
-      id: 'req-123',
-      sessionID: 'ses-1',
-      questions: [{
-        question: '问题',
-        header: '标题',
-        options: [{ label: 'A', description: '' }],
-      }],
-    };
-    const card = createQuestionCard(request);
-    
-    const json = JSON.stringify(card);
-    expect(json).toContain('"requestId":"req-123"');
-    expect(json).toContain('"questionIndex":0');
-    expect(json).toContain('"action":"question_answer"');
-  });
-
   test('shows option descriptions when provided', () => {
     const request: QuestionRequest = {
       id: 'req-1',
@@ -151,6 +154,24 @@ describe('createAnsweredCard', () => {
   });
 });
 
+describe('createMultiAnsweredCard', () => {
+  test('shows all questions and answers', () => {
+    const questions = [
+      { question: '问题1', header: '标题1', options: [] },
+      { question: '问题2', header: '标题2', options: [] },
+    ];
+    const answers = ['答案1', '答案2'];
+    const card = createMultiAnsweredCard(questions, answers);
+    
+    const json = JSON.stringify(card);
+    expect(json).toContain('问题 1');
+    expect(json).toContain('问题 2');
+    expect(json).toContain('答案1');
+    expect(json).toContain('答案2');
+    expect(json).toContain('"template":"green"');
+  });
+});
+
 describe('createQuestionErrorCard', () => {
   test('shows error with red header', () => {
     const card = createQuestionErrorCard('问题已过期');
@@ -162,7 +183,7 @@ describe('createQuestionErrorCard', () => {
 });
 
 describe('edge cases', () => {
-  test('empty options shows only text prompt (custom answer only)', () => {
+  test('empty options shows only text prompt', () => {
     const request: QuestionRequest = {
       id: 'req-1',
       sessionID: 'ses-1',
@@ -176,79 +197,7 @@ describe('edge cases', () => {
     const card = createQuestionCard(request);
     
     const json = JSON.stringify(card);
-    expect(json).not.toContain('"tag":"button"');
-    expect(json).not.toContain('"tag":"select_static"');
     expect(json).toContain('直接发送消息');
     expect(json).toContain('请输入您的想法');
-  });
-
-  test('handles multiple questions in one card', () => {
-    const request: QuestionRequest = {
-      id: 'req-1',
-      sessionID: 'ses-1',
-      questions: [
-        {
-          question: '问题1',
-          header: '第一个',
-          options: [{ label: 'A', description: '' }],
-        },
-        {
-          question: '问题2',
-          header: '第二个',
-          options: [{ label: 'X', description: '' }, { label: 'Y', description: '' }],
-        },
-      ],
-    };
-    const card = createQuestionCard(request);
-    
-    const json = JSON.stringify(card);
-    expect(json).toContain('问题1');
-    expect(json).toContain('问题2');
-    expect(json).toContain('"tag":"hr"');
-  });
-
-  test('exactly 3 options uses buttons', () => {
-    const request: QuestionRequest = {
-      id: 'req-1',
-      sessionID: 'ses-1',
-      questions: [{
-        question: '选择？',
-        header: '选择',
-        options: [
-          { label: 'A', description: '' },
-          { label: 'B', description: '' },
-          { label: 'C', description: '' },
-        ],
-        multiple: false,
-      }],
-    };
-    const card = createQuestionCard(request);
-    
-    const json = JSON.stringify(card);
-    expect(json).toContain('"tag":"button"');
-    expect(json).not.toContain('"tag":"select_static"');
-  });
-
-  test('exactly 4 options uses dropdown', () => {
-    const request: QuestionRequest = {
-      id: 'req-1',
-      sessionID: 'ses-1',
-      questions: [{
-        question: '选择？',
-        header: '选择',
-        options: [
-          { label: 'A', description: '' },
-          { label: 'B', description: '' },
-          { label: 'C', description: '' },
-          { label: 'D', description: '' },
-        ],
-        multiple: false,
-      }],
-    };
-    const card = createQuestionCard(request);
-    
-    const json = JSON.stringify(card);
-    expect(json).toContain('"tag":"select_static"');
-    expect(json).not.toContain('"tag":"button"');
   });
 });

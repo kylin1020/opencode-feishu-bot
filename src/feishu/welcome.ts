@@ -1,4 +1,5 @@
 import type { FeishuCard, CardElement } from './formatter';
+import { colors } from './design-tokens';
 
 export interface BotInfo {
   projectPath: string;
@@ -40,7 +41,7 @@ ${info.version ? `- 版本：${info.version}` : ''}`,
     config: { wide_screen_mode: true },
     header: {
       title: { tag: 'plain_text', content: greeting },
-      template: 'blue',
+      template: colors.welcome,
     },
     elements,
   };
@@ -63,7 +64,7 @@ export function createPrivateChatWelcomeCard(info: BotInfo): FeishuCard {
     config: { wide_screen_mode: true },
     header: {
       title: { tag: 'plain_text', content: '你好！' },
-      template: 'blue',
+      template: colors.welcome,
     },
     elements,
   };

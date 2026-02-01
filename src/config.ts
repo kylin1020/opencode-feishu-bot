@@ -18,10 +18,19 @@ export interface ModelConfig {
   name?: string;
 }
 
+export interface DocsConfig {
+  defaultFolderToken?: string;
+  wikiSpaceId?: string;
+}
+
 interface TomlConfig {
   feishu?: {
     app_id?: string;
     app_secret?: string;
+    docs?: {
+      default_folder_token?: string;
+      wiki_space_id?: string;
+    };
   };
   admin?: {
     user_ids?: string[];
@@ -62,6 +71,10 @@ const configSchema = z.object({
     id: z.string(),
     name: z.string().optional(),
   })).default([]),
+  docs: z.object({
+    defaultFolderToken: z.string().optional(),
+    wikiSpaceId: z.string().optional(),
+  }).default({}),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -108,6 +121,10 @@ export function loadConfig(overrides?: CliOverrides): Config {
     })) || [],
     defaultModel: overrides?.model || process.env.DEFAULT_MODEL || toml.models?.default,
     availableModels: toml.models?.available || [],
+    docs: {
+      defaultFolderToken: process.env.FEISHU_DEFAULT_FOLDER_TOKEN || toml.feishu?.docs?.default_folder_token,
+      wikiSpaceId: process.env.FEISHU_WIKI_SPACE_ID || toml.feishu?.docs?.wiki_space_id,
+    },
   };
   
   if (process.env.PROJECTS) {
@@ -189,4 +206,8 @@ export function filterModels<T extends { id: string; name: string }>(
   }
   
   return result;
+}
+
+export function getDocsConfig(config: Config): DocsConfig {
+  return config.docs;
 }

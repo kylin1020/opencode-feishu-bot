@@ -47,12 +47,23 @@ export interface MessageMapping {
   created_at: string;
 }
 
+/** 待处理问题记录 */
+export interface PendingQuestionRecord {
+  chat_id: string;
+  request_id: string;
+  message_id: string;
+  questions: string;
+  answers: string;
+  created_at: string;
+}
+
 /** 会话群记录 */
 export interface SessionChat {
   chat_id: string;
   session_id: string;
   owner_id: string;
   project_path: string;
+  model: string | null;
   title: string | null;
   title_set: boolean;
   created_at: string;
@@ -78,11 +89,22 @@ export class BotDatabase {
     this.initialize();
   }
 
-  /** 初始化数据库表结构 */
   private initialize(): void {
     const schemaPath = join(__dirname, 'schema.sql');
     const schema = readFileSync(schemaPath, 'utf-8');
     this.db.exec(schema);
+    this.runMigrations();
+  }
+
+  private runMigrations(): void {
+    const columns = this.db.prepare<{ name: string }, []>(
+      "PRAGMA table_info(session_chats)"
+    ).all();
+    
+    const hasModelColumn = columns.some(col => col.name === 'model');
+    if (!hasModelColumn) {
+      this.db.exec("ALTER TABLE session_chats ADD COLUMN model TEXT");
+    }
   }
 
   /** 获取用户会话 */
@@ -263,12 +285,12 @@ export class BotDatabase {
     return result.changes;
   }
 
-  createSessionChat(chatId: string, sessionId: string, ownerId: string, projectPath: string): void {
+  createSessionChat(chatId: string, sessionId: string, ownerId: string, projectPath: string, model?: string): void {
     const stmt = this.db.prepare(`
-      INSERT INTO session_chats (chat_id, session_id, owner_id, project_path)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO session_chats (chat_id, session_id, owner_id, project_path, model)
+      VALUES (?, ?, ?, ?, ?)
     `);
-    stmt.run(chatId, sessionId, ownerId, projectPath);
+    stmt.run(chatId, sessionId, ownerId, projectPath, model ?? null);
   }
 
   getSessionChat(chatId: string): SessionChat | null {
@@ -294,6 +316,15 @@ export class BotDatabase {
     stmt.run(title, chatId);
   }
 
+  updateSessionChatModel(chatId: string, model: string): void {
+    const stmt = this.db.prepare(`
+      UPDATE session_chats 
+      SET model = ?, updated_at = CURRENT_TIMESTAMP 
+      WHERE chat_id = ?
+    `);
+    stmt.run(model, chatId);
+  }
+
   deleteSessionChat(chatId: string): boolean {
     const stmt = this.db.prepare('DELETE FROM session_chats WHERE chat_id = ?');
     const result = stmt.run(chatId);
@@ -308,7 +339,40 @@ export class BotDatabase {
     return (result?.count ?? 0) > 0;
   }
 
-  /** 关闭数据库连接 */
+  savePendingQuestion(
+    chatId: string,
+    requestId: string,
+    messageId: string,
+    questions: unknown[],
+    answers: (string | null)[]
+  ): void {
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO pending_questions (chat_id, request_id, message_id, questions, answers)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+    stmt.run(chatId, requestId, messageId, JSON.stringify(questions), JSON.stringify(answers));
+  }
+
+  getPendingQuestion(chatId: string): PendingQuestionRecord | null {
+    const stmt = this.db.prepare<PendingQuestionRecord, [string]>(
+      'SELECT * FROM pending_questions WHERE chat_id = ?'
+    );
+    return stmt.get(chatId) ?? null;
+  }
+
+  updatePendingQuestionAnswers(chatId: string, answers: (string | null)[]): void {
+    const stmt = this.db.prepare(`
+      UPDATE pending_questions SET answers = ? WHERE chat_id = ?
+    `);
+    stmt.run(JSON.stringify(answers), chatId);
+  }
+
+  deletePendingQuestion(chatId: string): boolean {
+    const stmt = this.db.prepare('DELETE FROM pending_questions WHERE chat_id = ?');
+    const result = stmt.run(chatId);
+    return result.changes > 0;
+  }
+
   close(): void {
     this.db.close();
   }

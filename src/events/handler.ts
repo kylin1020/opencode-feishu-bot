@@ -103,12 +103,14 @@ export function setupEventHandlers(config: EventHandlerConfig): void {
             
             if (result) {
               const models = await getFilteredModels();
+              const defaultModel = sessionManager.getDefaultModel();
               const welcomeCard = createSessionChatWelcomeCard({
                 sessionId: result.sessionId,
                 projectPath: defaultPath,
                 projects: projects,
                 chatId: result.chatId,
                 models: models,
+                currentModel: defaultModel,
               });
               await feishuClient.sendCard(result.chatId, welcomeCard);
               
@@ -147,7 +149,9 @@ export function setupEventHandlers(config: EventHandlerConfig): void {
         
         case 'switch_model': {
           const models = await getFilteredModels();
-          const card = createModelSelectCard(models);
+          const sessionChat = event.chatId ? sessionManager.getSessionChat(event.chatId) : null;
+          const currentModel = sessionChat?.model || sessionManager.getDefaultModel();
+          const card = createModelSelectCard(models, currentModel, event.chatId);
           
           if (event.chatId) {
             await feishuClient.sendCard(event.chatId, card);
@@ -211,14 +215,36 @@ export function setupEventHandlers(config: EventHandlerConfig): void {
 
   feishuClient.onCardAction(async (event: CardActionEvent) => {
     const actionType = event.action.value?.action as string | undefined;
-    logger.info('卡片交互', { action: actionType, operatorId: event.operatorId });
-
-    if (!event.operatorId) {
-      logger.warn('卡片交互事件缺少操作者 ID');
-      return;
-    }
+    const formValue = event.action.formValue;
+    
+    logger.info('卡片交互', { 
+      action: actionType, 
+      operatorId: event.operatorId, 
+      chatId: event.chatId,
+      hasFormValue: !!formValue,
+      formValue,
+    });
 
     try {
+      if (formValue && Object.keys(formValue).some(k => k.startsWith('q_'))) {
+        const chatId = event.chatId;
+        if (!chatId) {
+          logger.warn('表单提交缺少 chatId');
+          return;
+        }
+
+        logger.info('处理问题表单提交', { chatId, formValue, messageId: event.messageId });
+
+        const success = await sessionManager.handleQuestionFormSubmit(
+          chatId,
+          formValue,
+          event.messageId
+        );
+
+        logger.info('问题表单提交结果', { success });
+        return;
+      }
+
       switch (actionType) {
         case 'switch_model': {
           const modelId = event.action.option;
@@ -227,68 +253,21 @@ export function setupEventHandlers(config: EventHandlerConfig): void {
             return;
           }
 
-          const chatId = event.chatId;
+          const chatId = event.chatId || (event.action.value as { chatId?: string })?.chatId;
           if (!chatId) {
-            logger.warn('切换模型缺少 chatId');
+            logger.warn('切换模型缺少 chatId', { eventChatId: event.chatId, valueChatId: (event.action.value as { chatId?: string })?.chatId });
             return;
           }
 
           const sessionChat = sessionManager.getSessionChat(chatId);
-          let sessionId: string | null = null;
-          
           if (sessionChat) {
-            sessionId = sessionChat.session_id;
-          } else {
-            sessionId = await sessionManager.getOrCreateUserSession(event.operatorId);
+            sessionManager.updateSessionChatModel(chatId, modelId);
+            logger.info('模型已更新', { chatId, modelId });
           }
-          
-          if (!sessionId) {
-            logger.error('获取会话失败');
-            return;
-          }
-
-          const success = await opencodeClient.executeCommand(sessionId, 'model', modelId);
           
           if (event.messageId) {
-            const card = success
-              ? createSuccessCard('切换成功', `已切换到模型：\`${modelId}\``)
-              : createErrorCard('切换失败', '切换模型时发生错误');
+            const card = createSuccessCard('切换成功', `已切换到模型：\`${modelId}\``)
             await feishuClient.updateCard(event.messageId, card);
-          }
-          break;
-        }
-
-        case 'question_answer': {
-          const chatId = event.chatId;
-          if (!chatId) {
-            logger.warn('问题回答缺少 chatId');
-            return;
-          }
-
-          const { requestId, questionIndex, answerLabel } = event.action.value as {
-            requestId?: string;
-            questionIndex?: number;
-            answerLabel?: string;
-          };
-
-          const selectedOption = event.action.option || answerLabel;
-          
-          if (!requestId || questionIndex === undefined || !selectedOption) {
-            logger.warn('问题回答缺少必要参数', { requestId, questionIndex, selectedOption });
-            return;
-          }
-
-          const success = await sessionManager.handleQuestionAnswer(
-            chatId,
-            requestId,
-            questionIndex,
-            selectedOption,
-            event.messageId
-          );
-
-          if (!success && event.messageId) {
-            const errorCard = createQuestionErrorCard('问题已过期或不存在');
-            await feishuClient.updateCard(event.messageId, errorCard);
           }
           break;
         }

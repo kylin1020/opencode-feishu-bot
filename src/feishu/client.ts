@@ -4,6 +4,8 @@
  */
 import * as Lark from '@larksuiteoapi/node-sdk';
 import { logger } from '../utils/logger';
+import { DocumentReader, DocumentWriter, parseDocumentUrl } from './docs';
+import type { DocumentContent, DocumentInfo, CreateDocumentOptions, DocumentResult } from './docs';
 
 /** 飞书客户端配置 */
 export interface FeishuConfig {
@@ -97,6 +99,7 @@ export interface CardActionEvent {
     tag: string;
     value: Record<string, unknown>;
     option?: string;
+    formValue?: Record<string, string | string[]>;
   };
 }
 
@@ -181,6 +184,8 @@ export class FeishuClient {
   private chatDisbandedHandler: ChatDisbandedHandler | null = null;
   private cardActionHandler: CardActionHandler | null = null;
   private isConnected = false;
+  private documentReader: DocumentReader;
+  private documentWriter: DocumentWriter;
 
   constructor(config: FeishuConfig) {
     this.appId = config.appId;
@@ -198,6 +203,9 @@ export class FeishuClient {
       appSecret: config.appSecret,
       loggerLevel: Lark.LoggerLevel.error,
     });
+
+    this.documentReader = new DocumentReader(this.client);
+    this.documentWriter = new DocumentWriter(this.client);
   }
 
   /** 注册消息处理回调 */
@@ -510,12 +518,27 @@ export class FeishuClient {
     }
 
     const data = rawData as Record<string, unknown>;
-    const eventId = (data.event_id as string) ?? '';
-    const operatorId = (data.operator_id as { open_id?: string })?.open_id ?? '';
-    const openChatId = (data.open_chat_id as string) ?? undefined;
-    const openMessageId = (data.open_message_id as string) ?? undefined;
+    const context = data.context as { open_chat_id?: string; open_message_id?: string } | undefined;
     
-    const actionData = data.action as { tag?: string; value?: Record<string, unknown>; option?: string } | undefined;
+    logger.info('收到卡片交互原始数据', { 
+      keys: Object.keys(data),
+      open_chat_id: data.open_chat_id,
+      open_message_id: data.open_message_id,
+      context,
+      action: data.action 
+    });
+    
+    const eventId = (data.event_id as string) ?? '';
+    const operatorId = (data.operator as { open_id?: string })?.open_id ?? '';
+    const openChatId = (data.open_chat_id as string) ?? context?.open_chat_id ?? undefined;
+    const openMessageId = (data.open_message_id as string) ?? context?.open_message_id ?? undefined;
+    
+    const actionData = data.action as { 
+      tag?: string; 
+      value?: Record<string, unknown>; 
+      option?: string;
+      form_value?: Record<string, string | string[]>;
+    } | undefined;
     if (!actionData) {
       logger.warn('卡片交互事件缺少 action');
       return;
@@ -530,6 +553,7 @@ export class FeishuClient {
         tag: actionData.tag ?? '',
         value: actionData.value ?? {},
         option: actionData.option,
+        formValue: actionData.form_value,
       },
     };
 
@@ -630,12 +654,18 @@ export class FeishuClient {
   /** 更新卡片消息 */
   async updateCard(messageId: string, card: object): Promise<UpdateCardResult> {
     try {
+      const content = JSON.stringify(card);
+      logger.debug('updateCard 调用', { messageId, contentLength: content.length, contentPreview: content.substring(0, 500) });
+      
       const response = await this.client.im.v1.message.patch({
         path: { message_id: messageId },
         data: {
-          content: JSON.stringify(card),
-        },
+          content,
+          msg_type: 'interactive',
+        } as { content: string },
       });
+      
+      logger.debug('updateCard response', { code: response.code, msg: response.msg, data: response.data });
 
       if (response.code !== 0) {
         const isRateLimited = response.code === 230020;
@@ -916,7 +946,26 @@ export class FeishuClient {
     return null;
   }
 
-  /** 获取 API 客户端实例 */
+  setDefaultDocumentFolder(folderToken: string): void {
+    this.documentWriter.setDefaultFolder(folderToken);
+  }
+
+  async readDocument(urlOrToken: string): Promise<DocumentResult<DocumentContent>> {
+    return this.documentReader.readDocument(urlOrToken);
+  }
+
+  async getDocumentInfo(documentId: string): Promise<DocumentResult<DocumentInfo>> {
+    return this.documentReader.getDocumentInfo(documentId);
+  }
+
+  async createDocument(options: CreateDocumentOptions): Promise<DocumentResult<DocumentInfo>> {
+    return this.documentWriter.createDocument(options);
+  }
+
+  async writeToDocument(urlOrToken: string, content: string): Promise<DocumentResult<void>> {
+    return this.documentWriter.writeToDocument(urlOrToken, content);
+  }
+
   getApiClient(): Lark.Client {
     return this.client;
   }

@@ -43,6 +43,12 @@ export const COMMANDS: Record<string, Command> = {
     usage: '/clear',
     adminOnly: false,
   },
+  exit: {
+    name: 'exit',
+    description: '退出并删除当前会话群',
+    usage: '/exit',
+    adminOnly: false,
+  },
   switch_project: {
     name: 'switch_project',
     description: '切换到不同的项目目录',
@@ -90,6 +96,18 @@ export const COMMANDS: Record<string, Command> = {
     description: '列出所有白名单用户',
     usage: '/whitelist_list',
     adminOnly: true,
+  },
+  doc_read: {
+    name: 'doc_read',
+    description: '读取飞书文档内容',
+    usage: '/doc_read <文档URL或token>',
+    adminOnly: false,
+  },
+  doc_create: {
+    name: 'doc_create',
+    description: '创建新的飞书文档',
+    usage: '/doc_create <标题>',
+    adminOnly: false,
   },
 };
 
