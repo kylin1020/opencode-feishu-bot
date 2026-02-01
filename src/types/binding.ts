@@ -11,7 +11,7 @@ export interface BindingMatch {
 export interface Binding {
   id: string;
   name?: string;
-  match: BindingMatch;
+  match?: BindingMatch;
   agentId: string;
   priority: number;
   enabled: boolean;
