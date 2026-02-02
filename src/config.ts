@@ -6,7 +6,6 @@ import { parse as parseToml } from 'smol-toml';
 
 export const CONFIG_DIR = join(homedir(), '.config', 'opencode-bot');
 export const CONFIG_FILE = join(CONFIG_DIR, 'config.toml');
-export const DEFAULT_DATABASE_PATH = join(CONFIG_DIR, 'bot.db');
 
 export interface ProjectConfig {
   path: string;
@@ -181,7 +180,7 @@ const configSchema = z.object({
   feishuAppSecret: z.string().min(1, '必须提供飞书应用密钥'),
   adminUserIds: z.array(z.string()).default([]),
   allowAllUsers: z.boolean().default(true),
-  databasePath: z.string().default(DEFAULT_DATABASE_PATH),
+  databasePath: z.string().optional(),
   logLevel: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   projects: z.array(z.object({
     path: z.string(),
@@ -239,7 +238,6 @@ export function loadConfig(overrides?: CliOverrides): Config {
     allowAllUsers: process.env.ALLOW_ALL_USERS !== undefined
       ? process.env.ALLOW_ALL_USERS !== 'false'
       : toml.admin?.allow_all_users ?? true,
-    databasePath: process.env.DATABASE_PATH || toml.database?.path || DEFAULT_DATABASE_PATH,
     logLevel: overrides?.logLevel || process.env.LOG_LEVEL || toml.logging?.level || 'info',
     projects: toml.projects?.map(p => ({
       path: p.path,

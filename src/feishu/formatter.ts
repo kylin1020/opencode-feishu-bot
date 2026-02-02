@@ -82,7 +82,7 @@ export function createCard(content: string, title?: string, template?: CardTempl
   if (title) {
     card.header = {
       title: { tag: 'plain_text', content: title },
-      template: template ?? 'blue',
+      template: template ?? 'indigo',  // 靛蓝：专业主色调
     };
   }
 
@@ -959,7 +959,7 @@ export function buildStreamingCardsV2(
   const dynamicTitle = title ?? getDynamicTitle(parts);
   
   const createCard = (elements: object[], isFinal: boolean): object => {
-    const template = isFinal && isComplete ? 'green' : 'wathet';
+    const template = isFinal && isComplete ? 'turquoise' : 'violet';  // 青绿/紫罗兰
     const headerTitle = isFinal && isComplete ? labels.complete : dynamicTitle;
     const cardTitle = cardIndex > 0 ? `${headerTitle} (续${cardIndex})` : headerTitle;
     

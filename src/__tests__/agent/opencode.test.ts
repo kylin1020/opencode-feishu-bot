@@ -36,6 +36,10 @@ class TestAgent extends BaseAgent {
     return 'executed';
   }
   
+  async summarize(_sessionId: string): Promise<boolean> {
+    return true;
+  }
+  
   async listModels(): Promise<ModelInfo[]> {
     return [
       { id: 'test/model-1', name: 'Test Model 1' },

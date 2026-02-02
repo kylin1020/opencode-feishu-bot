@@ -1,3 +1,10 @@
 export * from './types';
-export { DocumentReader, parseDocumentUrl } from './reader';
+export * from './block-types';
+export { DocumentReader, parseDocumentUrl, extractDocumentUrls, hasDocumentUrls } from './reader';
 export { DocumentWriter } from './writer';
+export { BlockReader } from './block-reader';
+export type { GetBlocksOptions, GetChildrenOptions } from './block-reader';
+export { BlockWriter } from './block-writer';
+export type { CreateBlockOptions, CreateBlockResult, UpdateBlockResult, DeleteBlockResult } from './block-writer';
+export { MediaUploader } from './media';
+export type { MediaParentType, UploadResult, UploadOptions, UploadProgress } from './media';

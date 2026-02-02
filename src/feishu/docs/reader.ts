@@ -1,4 +1,3 @@
-import type * as Lark from '@larksuiteoapi/node-sdk';
 import type {
   DocumentInfo,
   DocumentContent,
@@ -6,6 +5,7 @@ import type {
   ParsedDocumentUrl,
 } from './types';
 import { logger } from '../../utils/logger';
+import type { FeishuApiClient } from '../api';
 
 const FEISHU_URL_PATTERNS = [
   /feishu\.cn\/docx\/([a-zA-Z0-9]+)/,
@@ -15,6 +15,32 @@ const FEISHU_URL_PATTERNS = [
   /larksuite\.com\/docx\/([a-zA-Z0-9]+)/,
   /larksuite\.com\/docs\/([a-zA-Z0-9]+)/,
 ];
+
+/** 从文本中提取所有飞书文档/表格链接的正则 */
+const FEISHU_URL_EXTRACT_PATTERN = /https?:\/\/(?:[a-zA-Z0-9-]+\.)?(?:feishu\.cn|larksuite\.com)\/(?:docx|docs|wiki|sheets|base)\/[a-zA-Z0-9_-]+(?:\?[^\s)]*)?/g;
+
+/**
+ * 从文本中提取所有飞书文档/表格链接
+ * @param text 输入文本
+ * @returns 解析后的文档链接数组
+ */
+export function extractDocumentUrls(text: string): ParsedDocumentUrl[] {
+  const matches = text.match(FEISHU_URL_EXTRACT_PATTERN);
+  if (!matches) {
+    return [];
+  }
+  
+  const uniqueUrls = [...new Set(matches)];
+  return uniqueUrls.map(url => parseDocumentUrl(url));
+}
+
+/**
+ * 检查文本是否包含飞书文档/表格链接
+ * @param text 输入文本
+ */
+export function hasDocumentUrls(text: string): boolean {
+  return FEISHU_URL_EXTRACT_PATTERN.test(text);
+}
 
 export function parseDocumentUrl(urlOrToken: string): ParsedDocumentUrl {
   if (!urlOrToken.includes('/')) {
@@ -38,17 +64,15 @@ export function parseDocumentUrl(urlOrToken: string): ParsedDocumentUrl {
 }
 
 export class DocumentReader {
-  private client: Lark.Client;
+  private apiClient: FeishuApiClient;
 
-  constructor(client: Lark.Client) {
-    this.client = client;
+  constructor(apiClient: FeishuApiClient) {
+    this.apiClient = apiClient;
   }
 
   async getDocumentInfo(documentId: string): Promise<DocumentResult<DocumentInfo>> {
     try {
-      const response = await this.client.docx.document.get({
-        path: { document_id: documentId },
-      });
+      const response = await this.apiClient.getDocumentInfo(documentId);
 
       if (response.code !== 0) {
         logger.error('获取文档信息失败', { code: response.code, msg: response.msg });
@@ -77,10 +101,7 @@ export class DocumentReader {
 
   async getDocumentContent(documentId: string): Promise<DocumentResult<DocumentContent>> {
     try {
-      const response = await this.client.docx.document.rawContent({
-        path: { document_id: documentId },
-        params: { lang: 0 },
-      });
+      const response = await this.apiClient.getDocumentRawContent(documentId, 0);
 
       if (response.code !== 0) {
         logger.error('获取文档内容失败', { code: response.code, msg: response.msg });
@@ -103,11 +124,48 @@ export class DocumentReader {
     }
   }
 
+  /**
+   * 读取 wiki 文档
+   * Wiki 需要先获取实际的文档 token
+   */
+  async readWikiDocument(wikiToken: string): Promise<DocumentResult<DocumentContent>> {
+    try {
+      // 获取 wiki 节点信息，获取实际的文档 token
+      const nodeResponse = await this.apiClient.getWikiNodeInfo(wikiToken);
+      
+      if (nodeResponse.code !== 0) {
+        logger.error('获取 wiki 节点信息失败', { code: nodeResponse.code, msg: nodeResponse.msg });
+        return { success: false, error: nodeResponse.msg || '获取 wiki 节点信息失败' };
+      }
+
+      const node = nodeResponse.data?.node;
+      if (!node?.obj_token) {
+        return { success: false, error: 'Wiki 节点不存在' };
+      }
+
+      // 检查节点类型，目前只支持文档类型
+      if (node.obj_type !== 'docx' && node.obj_type !== 'doc') {
+        return { success: false, error: `不支持的 wiki 节点类型: ${node.obj_type}` };
+      }
+
+      // 使用实际的文档 token 获取内容
+      return this.getDocumentContent(node.obj_token);
+    } catch (error) {
+      logger.error('读取 wiki 文档时出错', error);
+      return { success: false, error: error instanceof Error ? error.message : '未知错误' };
+    }
+  }
+
   async readDocument(urlOrToken: string): Promise<DocumentResult<DocumentContent>> {
     const parsed = parseDocumentUrl(urlOrToken);
     
     if (parsed.type === 'unknown' || parsed.type === 'sheet') {
       return { success: false, error: `不支持的文档类型: ${parsed.type}` };
+    }
+
+    // wiki 类型需要特殊处理
+    if (parsed.type === 'wiki') {
+      return this.readWikiDocument(parsed.token);
     }
 
     return this.getDocumentContent(parsed.token);

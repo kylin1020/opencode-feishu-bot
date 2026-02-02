@@ -19,27 +19,36 @@ export type CardTemplate =
   | 'indigo' 
   | 'grey';
 
-/** 语义化颜色映射 */
+/** 
+ * 语义化颜色映射 - 现代专业风配色方案
+ * 
+ * 设计理念：
+ * - 使用更沉稳、精致的色彩替代传统的红绿蓝
+ * - indigo(靛蓝) 作为主色调，传达专业与可靠
+ * - turquoise(青绿) 用于成功状态，清新而不刺眼
+ * - carmine(洋红) 用于错误，警示但不压抑
+ * - violet(紫罗兰) 用于处理中状态，有科技感
+ */
 export const colors = {
   // 状态颜色
-  success: 'green' as CardTemplate,
-  error: 'red' as CardTemplate,
-  warning: 'orange' as CardTemplate,
-  info: 'blue' as CardTemplate,
+  success: 'turquoise' as CardTemplate,    // 青绿：清新现代的成功色
+  error: 'carmine' as CardTemplate,         // 洋红：精致的错误警示
+  warning: 'orange' as CardTemplate,        // 橙色：保持经典警告色
+  info: 'indigo' as CardTemplate,           // 靛蓝：沉稳专业的信息色
   
   // 进程状态
-  processing: 'wathet' as CardTemplate,
-  pending: 'wathet' as CardTemplate,
-  running: 'wathet' as CardTemplate,
-  complete: 'green' as CardTemplate,
+  processing: 'violet' as CardTemplate,     // 紫罗兰：科技感的处理中
+  pending: 'violet' as CardTemplate,        // 紫罗兰：等待状态
+  running: 'violet' as CardTemplate,        // 紫罗兰：运行中
+  complete: 'turquoise' as CardTemplate,    // 青绿：与成功一致
   
   // 中性色
-  neutral: 'grey' as CardTemplate,
-  primary: 'blue' as CardTemplate,
+  neutral: 'grey' as CardTemplate,          // 灰色：中性背景
+  primary: 'indigo' as CardTemplate,        // 靛蓝：主色调
   
   // 特殊用途
-  question: 'orange' as CardTemplate,
-  welcome: 'blue' as CardTemplate,
+  question: 'yellow' as CardTemplate,       // 黄色：明快的询问提示
+  welcome: 'violet' as CardTemplate,        // 紫罗兰：优雅的欢迎
 } as const;
 
 /** 状态 Emoji 映射 */

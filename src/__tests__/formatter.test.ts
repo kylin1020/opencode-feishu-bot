@@ -32,33 +32,33 @@ describe('Formatter', () => {
       
       expect(card.header).toBeDefined();
       expect(card.header!.title.content).toBe('My Title');
-      expect(card.header!.template).toBe('blue');
+      expect(card.header!.template).toBe('indigo');
     });
 
     test('creates card with custom template', () => {
-      const card = createCard('Content', 'Title', 'green');
+      const card = createCard('Content', 'Title', 'turquoise');
       
-      expect(card.header?.template).toBe('green');
+      expect(card.header?.template).toBe('turquoise');
     });
   });
 
   describe('createStatusCard', () => {
-    test('creates error card with red template', () => {
+    test('creates error card with carmine template', () => {
       const card = createStatusCard('Error occurred');
       
-      expect(card.header?.template).toBe('red');
+      expect(card.header?.template).toBe('carmine');
     });
 
-    test('creates complete card with green template', () => {
+    test('creates complete card with turquoise template', () => {
       const card = createStatusCard('Task complete');
       
-      expect(card.header?.template).toBe('green');
+      expect(card.header?.template).toBe('turquoise');
     });
 
-    test('creates running card with wathet template', () => {
+    test('creates running card with violet template', () => {
       const card = createStatusCard('Running task');
       
-      expect(card.header?.template).toBe('wathet');
+      expect(card.header?.template).toBe('violet');
     });
   });
 
@@ -192,17 +192,17 @@ describe('Formatter', () => {
   });
 
   describe('buildStreamingCard', () => {
-    test('builds incomplete card with wathet template', () => {
+    test('builds incomplete card with violet template', () => {
       const card = buildStreamingCard('Content', false);
       
-      expect(card.header?.template).toBe('wathet');
+      expect(card.header?.template).toBe('violet');
       expect(card.header?.title.content).toBe('处理中...');
     });
 
-    test('builds complete card with green template', () => {
+    test('builds complete card with turquoise template', () => {
       const card = buildStreamingCard('Content', true);
       
-      expect(card.header?.template).toBe('green');
+      expect(card.header?.template).toBe('turquoise');
       expect(card.header?.title.content).toBe('响应完成');
     });
 

@@ -23,11 +23,10 @@
   "scripts": {
     "start": "bun run src/index.ts",
     "dev": "bun --watch src/index.ts",
-    "build": "bun run build:clean && bun run build:js && bun run build:types && bun run build:assets",
+    "build": "bun run build:clean && bun run build:js && bun run build:types",
     "build:clean": "rm -rf dist",
     "build:js": "bun build ./src/index.ts --outdir ./dist --target node --format esm --packages external",
     "build:types": "bunx tsc -p tsconfig.build.json",
-    "build:assets": "cp src/database/schema.sql dist/",
     "test": "bun test",
     "test:watch": "bun test --watch",
     "prepublishOnly": "bun run build",

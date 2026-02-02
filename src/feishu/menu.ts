@@ -134,7 +134,7 @@ export function createStatusCard(status: SessionStatus): object {
 
   return {
     config: { wide_screen_mode: true },
-    header: createHeader('📊 会话状态', 'green'),
+    header: createHeader('📊 会话状态', 'turquoise'),  // 青绿：状态信息
     elements: [createMarkdown(lines.join('\n'))],
   };
 }
@@ -197,7 +197,7 @@ export function createConfirmCard(
 export function createSuccessCard(title: string, message: string): object {
   return {
     config: { wide_screen_mode: true },
-    header: createHeader(title, 'green'),
+    header: createHeader(title, 'turquoise'),  // 青绿：成功
     elements: [createMarkdown(message)],
   };
 }
@@ -211,7 +211,7 @@ export function createSessionChatCreatedCard(chatId: string, sessionId: string, 
     config: { wide_screen_mode: true },
     header: {
       title: { tag: 'plain_text', content: '🎉 会话群已创建' },
-      template: 'green',
+      template: 'turquoise',  // 青绿：成功创建
     },
     elements: [
       {
@@ -245,7 +245,7 @@ export function createSessionChatCreatedCard(chatId: string, sessionId: string, 
 export function createErrorCard(title: string, message: string): object {
   return {
     config: { wide_screen_mode: true },
-    header: createHeader(title, 'red'),
+    header: createHeader(title, 'carmine'),  // 洋红：错误
     elements: [createMarkdown(message)],
   };
 }
@@ -342,7 +342,7 @@ export function createSessionChatWelcomeCard(info: SessionChatWelcomeInfo): obje
     config: { wide_screen_mode: true },
     header: {
       title: { tag: 'plain_text', content: '🚀 会话已就绪' },
-      template: 'blue',
+      template: 'indigo',  // 靛蓝：专业的主色调
     },
     elements,
   };
@@ -352,7 +352,7 @@ export function createProjectSwitchedCard(projectName: string, projectPath: stri
   const shortSessionId = sessionId.replace(/^ses_/, '').slice(0, 8);
   return {
     config: { wide_screen_mode: true },
-    header: createHeader('✅ 项目已切换', 'green'),
+    header: createHeader('✅ 项目已切换', 'turquoise'),  // 青绿：成功
     elements: [
       createMarkdown(
         `**${projectName}**\n` +
@@ -460,7 +460,7 @@ export function createQuickActionsCard(info: QuickActionsInfo): object {
 
   return {
     config: { wide_screen_mode: true },
-    header: createHeader('⚡ 快捷操作', 'blue'),
+    header: createHeader('⚡ 快捷操作', 'indigo'),  // 靛蓝：专业主色调
     elements,
   };
 }

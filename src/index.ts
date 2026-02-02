@@ -1,23 +1,26 @@
-/**
- * OpenCode 飞书机器人入口文件
- */
-import { loadConfig, getAdminUserIds, getDefaultProjectPath, getProjects, getAvailableModels, getDefaultModel } from './config';
+import { loadConfig, getAdminUserIds, getDefaultProjectPath, getProjects, getAvailableModels, getDefaultModel, getMcpConfig } from './config';
 import { parseArgs, formatHelp, getVersion, isValidLogLevel } from './cli';
 import { logger, setLogLevel } from './utils/logger';
-import { initializeDatabase } from './database';
-import { createFeishuClient, parseTextContent } from './feishu/client';
-import { createOpencodeWrapper } from './opencode/client';
-import { createSessionManager } from './session/manager';
+import { setupGlobalErrorHandling } from './utils/reconnect';
+import { Gateway } from './gateway';
+import { FeishuChannel } from './channels/feishu';
+import { OpencodeAgent } from './agent/opencode';
+import { createHookManager } from './hooks';
+import { createPluginManager, type PluginManagerDependencies } from './plugins';
+import { McpHub } from './mcp';
+import { createFeishuMcpServer } from './mcp/servers/feishu';
+import { createSessionManager } from './session';
 import { createCommandHandler } from './commands/handler';
 import { isCommand } from './commands/parser';
-import { createReconnectionManager, setupGlobalErrorHandling } from './utils/reconnect';
-import { setupEventHandlers } from './events/handler';
+import { createFeishuApiClient } from './feishu/api';
+import type { MessageEvent } from './types/channel';
+import type { ContentBlock, ReplyStatus } from './types/message';
 
 async function listAvailableModels(): Promise<void> {
-  const tempClient = createOpencodeWrapper({});
+  const agent = new OpencodeAgent({});
   try {
-    await tempClient.start();
-    const models = await tempClient.listModels();
+    await agent.initialize();
+    const models = await agent.listModels();
     
     console.log('\n可用模型列表：\n');
     models.forEach((model, index) => {
@@ -27,7 +30,7 @@ async function listAvailableModels(): Promise<void> {
     });
     console.log(`共 ${models.length} 个模型\n`);
   } finally {
-    tempClient.stop();
+    await agent.shutdown();
   }
 }
 
@@ -63,64 +66,98 @@ async function main(): Promise<void> {
   
   logger.info('正在启动飞书 OpenCode 机器人...');
   
-  const db = initializeDatabase(config.databasePath);
-  logger.info('数据库已初始化', { path: config.databasePath });
+  const defaultProjectPath = getDefaultProjectPath(cliOptions.project);
+  const defaultModel = getDefaultModel(config);
+  const adminUserIds = getAdminUserIds(config);
+  const projects = getProjects(config);
+  const availableModels = getAvailableModels(config);
   
-  const feishuClient = createFeishuClient({
+  const mcpHub = new McpHub();
+  const hookManager = createHookManager();
+  
+  const channel = new FeishuChannel({
     appId: config.feishuAppId,
     appSecret: config.feishuAppSecret,
   });
   
-  const defaultProjectPath = getDefaultProjectPath(cliOptions.project);
-  const defaultModel = getDefaultModel(config);
-  
-  const opencodeClient = createOpencodeWrapper({
+  const agent = new OpencodeAgent({
     directory: defaultProjectPath,
   });
   
-  const opencodeUrl = await opencodeClient.start();
-  
-  const adminUserIds = getAdminUserIds(config);
+  const gateway = new Gateway({
+    defaultAgent: 'opencode',
+    maxConcurrency: 10,
+  });
   
   const sessionManager = createSessionManager(
-    db,
-    feishuClient,
-    opencodeClient,
     {
-      defaultProjectPath,
-      defaultModel,
-      adminUserIds,
-      allowAllUsers: config.allowAllUsers,
+      keyType: 'chat',
+      idleTimeoutMs: 30 * 60 * 1000,
+      autoCompact: true,
+      compactThreshold: 50,
+    },
+    {
+      getAgent: (id) => gateway.getAgent(id),
+      getChannel: (id) => gateway.getChannel(id),
+      createChat: async (name, userIds) => {
+        const result = await channel.createChat(name, userIds);
+        return result ? { chatId: result } : null;
+      },
+      updateChatName: (chatId, name) => channel.updateChatName(chatId, name),
+      deleteChat: (chatId) => channel.deleteChat(chatId),
     }
   );
   
-  const projects = getProjects(config);
-  const availableModels = getAvailableModels(config);
-  
-  const commandHandler = createCommandHandler(db, feishuClient, sessionManager, opencodeClient, { projects, availableModels });
-  
-  setupEventHandlers({
-    feishuClient,
-    sessionManager,
-    opencodeClient,
-    projects,
-    availableModels,
+  const mcpConfig = getMcpConfig(config);
+  const apiClient = createFeishuApiClient(config.feishuAppId, config.feishuAppSecret);
+  const feishuMcpServer = createFeishuMcpServer({
+    larkClient: channel.getFeishuClient().getLarkClient(),
+    apiClient,
+    defaultFolderToken: config.docs?.defaultFolderToken,
+    sendMessage: (chatId, text) => channel.sendTextMessage(chatId, text),
+    createChat: (name, userIds) => channel.createChat(name, userIds),
   });
   
-  feishuClient.onMessage(async (event) => {
-    logger.debug('收到消息', { 
-      chatId: event.chatId, 
-      senderId: event.senderId,
-      messageType: event.messageType,
-    });
+  if (mcpConfig.servers['feishu']?.enabled !== false) {
+    mcpHub.registerServer(feishuMcpServer);
+  }
+  
+  const pluginDeps: PluginManagerDependencies = {
+    hookManager,
+    mcpHub,
+    getChannel: (id) => gateway.getChannel(id),
+    getAgent: (id) => gateway.getAgent(id),
+    registerChannel: (ch) => gateway.registerChannel(ch),
+    registerAgent: (ag) => gateway.registerAgent(ag),
+    registerMcpServer: (server) => mcpHub.registerServer(server),
+  };
+  
+  createPluginManager({}, pluginDeps);
+  
+  gateway.registerChannel(channel);
+  gateway.registerAgent(agent);
+  
+  const commandHandler = createCommandHandler(channel, agent, {
+    projects,
+    availableModels,
+    defaultProjectPath,
+    defaultModel,
+    adminUserIds,
+  });
+  
+  channel.on('message', async (event) => {
+    const msgEvent = event as MessageEvent;
+    const { chatId, senderId, content } = msgEvent;
     
-    const text = parseTextContent(event.content);
+    logger.debug('收到消息', { chatId, senderId, type: msgEvent.messageType });
+    
+    const text = content || '';
     
     if (isCommand(text)) {
-      const result = await commandHandler.handleIfCommand(text, {
-        chatId: event.chatId,
-        userId: event.senderId,
-        isAdmin: sessionManager.isAdmin(event.senderId),
+      const result = await commandHandler.handle(text, {
+        chatId,
+        userId: senderId,
+        isAdmin: commandHandler.isAdmin(senderId),
       });
       
       if (result.handled) {
@@ -128,24 +165,66 @@ async function main(): Promise<void> {
       }
     }
     
-    await sessionManager.handleMessage(event);
+    if (!text.trim()) {
+      return;
+    }
+    
+    try {
+      const session = commandHandler.getSession(chatId);
+      
+      let sessionId = session.sessionId;
+      if (!sessionId) {
+        sessionId = await agent.createSession(session.projectPath, session.model);
+        commandHandler.setSessionId(chatId, sessionId);
+      }
+      
+      const initialReply = createReply('pending', [{ type: 'text', content: '正在思考...' }]);
+      const messageId = await channel.sendMessage(chatId, initialReply);
+      
+      let fullContent = '';
+      let thinkingContent = '';
+      
+      const unsubscribe = agent.subscribe(sessionId, async (agentEvent) => {
+        try {
+          switch (agentEvent.type) {
+            case 'thinking.delta':
+              thinkingContent += agentEvent.delta;
+              break;
+              
+            case 'message.delta':
+              fullContent += agentEvent.delta;
+              const streamingReply = createReply('streaming', [{ type: 'text', content: fullContent }], thinkingContent);
+              await channel.updateMessage(messageId, streamingReply);
+              break;
+              
+            case 'message.complete':
+              const completeReply = createReply('completed', [{ type: 'text', content: fullContent }], thinkingContent);
+              await channel.updateMessage(messageId, completeReply);
+              unsubscribe();
+              break;
+              
+            case 'error':
+              const errorReply = createReply('error', [{ type: 'error', message: agentEvent.message }]);
+              await channel.updateMessage(messageId, errorReply);
+              unsubscribe();
+              break;
+          }
+        } catch (updateError) {
+          logger.error('更新消息失败', { error: updateError });
+        }
+      });
+      
+      await agent.send(sessionId, text);
+      
+    } catch (error) {
+      logger.error('处理消息失败', { chatId, error });
+      await channel.sendTextMessage(chatId, `处理消息时出错: ${error instanceof Error ? error.message : '未知错误'}`);
+    }
   });
   
-  const reconnectionManager = createReconnectionManager(
-    async () => {
-      await feishuClient.start();
-    },
-    async () => {
-      await feishuClient.stop();
-    },
-    {
-      maxRetries: 10,
-      initialDelayMs: 1000,
-      maxDelayMs: 30000,
-    }
-  );
+  await gateway.start();
   
-  await reconnectionManager.connect();
+  const opencodeUrl = agent.getWrapper().getServerUrl();
   
   logger.info('飞书 OpenCode 机器人启动成功');
   logger.info('配置信息', {
@@ -159,10 +238,9 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string) => {
     logger.info(`收到 ${signal} 信号，正在关闭...`);
     
-    sessionManager.cleanup();
-    await reconnectionManager.disconnect();
-    opencodeClient.stop();
-    db.close();
+    sessionManager.shutdown();
+    await gateway.stop();
+    hookManager.clear();
     
     logger.info('关闭完成');
     process.exit(0);
@@ -170,6 +248,24 @@ async function main(): Promise<void> {
   
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
+}
+
+function createReply(status: ReplyStatus, blocks: ContentBlock[], thinking?: string): {
+  status: ReplyStatus;
+  blocks: ContentBlock[];
+  showThinking?: boolean;
+} {
+  const result: { status: ReplyStatus; blocks: ContentBlock[]; showThinking?: boolean } = {
+    status,
+    blocks,
+  };
+  
+  if (thinking) {
+    result.blocks = [{ type: 'thinking', content: thinking }, ...blocks];
+    result.showThinking = true;
+  }
+  
+  return result;
 }
 
 main().catch((error) => {

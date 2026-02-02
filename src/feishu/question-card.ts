@@ -131,7 +131,7 @@ export function createAnsweredCard(question: string, answer: string): object {
     config: { update_multi: true },
     header: {
       title: { tag: 'plain_text', content: '✅ 已回答' },
-      template: 'green',
+      template: 'turquoise',  // 青绿：成功/已完成
     },
     body: {
       direction: 'vertical',
@@ -159,7 +159,7 @@ export function createMultiAnsweredCard(questions: QuestionInfo[], answers: stri
     config: { update_multi: true },
     header: {
       title: { tag: 'plain_text', content: '✅ 已回答' },
-      template: 'green',
+      template: 'turquoise',  // 青绿：成功/已完成
     },
     body: {
       direction: 'vertical',
@@ -174,7 +174,7 @@ export function createQuestionErrorCard(message: string): object {
     config: { update_multi: true },
     header: {
       title: { tag: 'plain_text', content: '❌ 操作失败' },
-      template: 'red',
+      template: 'carmine',  // 洋红：错误/失败
     },
     body: {
       direction: 'vertical',

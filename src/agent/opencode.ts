@@ -56,7 +56,7 @@ export class OpencodeAgent extends BaseAgent {
       this.sessionModels.set(sessionId, model);
     }
     
-    this.setupEventSubscription(sessionId);
+    await this.setupEventSubscription(sessionId);
     
     this.notifyHandlers(sessionId, {
       type: 'session.created',
@@ -179,12 +179,12 @@ export class OpencodeAgent extends BaseAgent {
     }
   }
 
-  private setupEventSubscription(sessionId: string): void {
-    this.wrapper.subscribeToEvents(sessionId, (event) => {
+  private async setupEventSubscription(sessionId: string): Promise<void> {
+    const unsub = await this.wrapper.subscribeToEvents(sessionId, (event) => {
       this.handleOpencodeEvent(sessionId, event);
-    }).then(unsub => {
-      this.sessionUnsubscribers.set(sessionId, unsub);
     });
+    this.sessionUnsubscribers.set(sessionId, unsub);
+    logger.debug('Event subscription set up', { sessionId });
   }
 
   private handleOpencodeEvent(sessionId: string, event: OpencodeEventData): void {
@@ -210,6 +210,59 @@ export class OpencodeAgent extends BaseAgent {
           delta: (part?.text as string) ?? '',
         });
         break;
+
+      case 'message.part.updated': {
+        const info = properties.info as Record<string, unknown> | undefined;
+        const partType = part?.type as string | undefined;
+        
+        if (partType === 'text') {
+          const text = (part?.text as string) ?? '';
+          if (text) {
+            this.notifyHandlers(sessionId, {
+              type: 'message.delta',
+              sessionId,
+              timestamp: Date.now(),
+              messageId: (info?.id as string) ?? '',
+              delta: text,
+            });
+          }
+        } else if (partType === 'thinking' || partType === 'reasoning') {
+          const text = (part?.text as string) ?? '';
+          if (text) {
+            this.notifyHandlers(sessionId, {
+              type: 'thinking.delta',
+              sessionId,
+              timestamp: Date.now(),
+              delta: text,
+            });
+          }
+        } else if (partType === 'tool-invocation' || partType === 'tool') {
+          const toolInfo = extractToolCallFromPart(part);
+          if (toolInfo) {
+            const toolEvent: AnyAgentEvent = toolInfo.state === 'completed' || toolInfo.state === 'error'
+              ? {
+                  type: 'tool.complete',
+                  sessionId,
+                  timestamp: Date.now(),
+                  toolCallId: toolInfo.name,
+                  toolName: toolInfo.name,
+                  success: toolInfo.state === 'completed',
+                  output: toolInfo.output,
+                  error: toolInfo.error,
+                }
+              : {
+                  type: 'tool.start',
+                  sessionId,
+                  timestamp: Date.now(),
+                  toolCallId: toolInfo.name,
+                  toolName: toolInfo.name,
+                  input: toolInfo.input,
+                };
+            this.notifyHandlers(sessionId, toolEvent);
+          }
+        }
+        break;
+      }
 
       case 'assistant.tool':
         const toolInfo = extractToolCallFromPart(part);
@@ -238,6 +291,7 @@ export class OpencodeAgent extends BaseAgent {
         break;
 
       case 'message.completed':
+      case 'session.idle':
         this.notifyHandlers(sessionId, {
           type: 'message.complete',
           sessionId,

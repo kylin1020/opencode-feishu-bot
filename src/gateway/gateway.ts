@@ -1,8 +1,7 @@
-import type { IChannel, MessageEvent, AnyChannelEvent } from '../types/channel';
-import type { IAgentRuntime, AnyAgentEvent } from '../types/agent';
-import type { UnifiedMessage, MessageContext } from '../types/message';
+import type { IChannel } from '../types/channel';
+import type { IAgentRuntime } from '../types/agent';
 import { BindingsRouter } from './router';
-import type { Binding, BindingContext } from '../types/binding';
+import type { Binding } from '../types/binding';
 import { LaneQueue } from '../queue/lane-queue';
 import { logger } from '../utils/logger';
 
@@ -40,7 +39,6 @@ export class Gateway {
     }
     
     this.channels.set(channel.id, channel);
-    this.setupChannelHandlers(channel);
     logger.info('Channel registered', { channelId: channel.id, type: channel.type });
   }
 
@@ -128,59 +126,5 @@ export class Gateway {
 
   isStarted(): boolean {
     return this.started;
-  }
-
-  private setupChannelHandlers(channel: IChannel): void {
-    channel.on('message', async (event) => {
-      await this.handleMessage(channel, event as MessageEvent);
-    });
-  }
-
-  private async handleMessage(channel: IChannel, event: MessageEvent): Promise<void> {
-    const context: BindingContext = {
-      channelId: channel.id,
-      channelType: channel.type,
-      chatId: event.chatId,
-      chatType: event.chatType,
-      userId: event.senderId,
-      messageText: event.content,
-    };
-
-    const routeResult = this.router.route(context);
-    const agent = this.agents.get(routeResult.agentId);
-    
-    if (!agent) {
-      logger.warn('No agent found for message', { 
-        agentId: routeResult.agentId, 
-        chatId: event.chatId 
-      });
-      return;
-    }
-
-    const sessionKey = `${channel.id}:${event.chatId}`;
-    
-    await this.queue.enqueue(sessionKey, async () => {
-      await this.processMessage(channel, agent, event, context);
-    });
-  }
-
-  private async processMessage(
-    channel: IChannel,
-    agent: IAgentRuntime,
-    event: MessageEvent,
-    context: BindingContext
-  ): Promise<void> {
-    try {
-      const sessionId = await agent.getOrCreateSession(process.cwd());
-      
-      await agent.send(sessionId, event.content);
-      
-    } catch (error) {
-      logger.error('Error processing message', { 
-        channelId: channel.id, 
-        chatId: event.chatId,
-        error 
-      });
-    }
   }
 }

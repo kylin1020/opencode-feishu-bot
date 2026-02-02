@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { loadConfig, CONFIG_DIR, CONFIG_FILE, DEFAULT_DATABASE_PATH } from '../config';
+import { loadConfig, CONFIG_DIR, CONFIG_FILE } from '../config';
 import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';

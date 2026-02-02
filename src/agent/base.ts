@@ -27,6 +27,7 @@ export abstract class BaseAgent implements IAgentRuntime {
   abstract send(sessionId: string, message: string, options?: SendOptions): Promise<void>;
   abstract abort(sessionId: string): Promise<boolean>;
   abstract executeCommand(sessionId: string, command: string): Promise<string>;
+  abstract summarize(sessionId: string): Promise<boolean>;
   
   abstract listModels(): Promise<ModelInfo[]>;
   abstract getSessionInfo(sessionId: string): Promise<{

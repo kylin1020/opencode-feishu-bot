@@ -144,11 +144,11 @@ describe('createQuestionCard (Form Mode)', () => {
 });
 
 describe('createAnsweredCard', () => {
-  test('shows answered state with green header', () => {
+  test('shows answered state with turquoise header', () => {
     const card = createAnsweredCard('选择认证方式？', 'OAuth');
     const json = JSON.stringify(card);
     expect(json).toContain('已回答');
-    expect(json).toContain('"template":"green"');
+    expect(json).toContain('"template":"turquoise"');
     expect(json).toContain('OAuth');
     expect(json).toContain('选择认证方式？');
   });
@@ -168,16 +168,16 @@ describe('createMultiAnsweredCard', () => {
     expect(json).toContain('问题 2');
     expect(json).toContain('答案1');
     expect(json).toContain('答案2');
-    expect(json).toContain('"template":"green"');
+    expect(json).toContain('"template":"turquoise"');
   });
 });
 
 describe('createQuestionErrorCard', () => {
-  test('shows error with red header', () => {
+  test('shows error with carmine header', () => {
     const card = createQuestionErrorCard('问题已过期');
     const json = JSON.stringify(card);
     expect(json).toContain('操作失败');
-    expect(json).toContain('"template":"red"');
+    expect(json).toContain('"template":"carmine"');
     expect(json).toContain('问题已过期');
   });
 });

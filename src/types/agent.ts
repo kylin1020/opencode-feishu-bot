@@ -239,6 +239,8 @@ export interface IAgentRuntime {
   abort(sessionId: string): Promise<boolean>;
   /** 执行命令 */
   executeCommand(sessionId: string, command: string): Promise<string>;
+  /** 压缩/总结会话 */
+  summarize(sessionId: string): Promise<boolean>;
 
   /** 订阅事件 */
   subscribe(sessionId: string, handler: AgentEventHandler): () => void;

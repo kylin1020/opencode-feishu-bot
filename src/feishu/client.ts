@@ -4,8 +4,11 @@
  */
 import * as Lark from '@larksuiteoapi/node-sdk';
 import { logger } from '../utils/logger';
-import { DocumentReader, DocumentWriter, parseDocumentUrl } from './docs';
-import type { DocumentContent, DocumentInfo, CreateDocumentOptions, DocumentResult } from './docs';
+import { DocumentReader, DocumentWriter, parseDocumentUrl, BlockReader, BlockWriter, MediaUploader } from './docs';
+import type { DocumentContent, DocumentInfo, CreateDocumentOptions, DocumentResult, DocumentBlock, CreateBlockData } from './docs';
+import { SheetReader, SheetWriter, parseSheetUrl } from './sheets';
+import type { SpreadsheetInfo, SheetInfo, CellValue, CreateSpreadsheetOptions, SheetResult } from './sheets';
+import { FeishuApiClient } from './api';
 
 /** 飞书客户端配置 */
 export interface FeishuConfig {
@@ -175,6 +178,7 @@ export class FeishuClient {
   private wsClient: Lark.WSClient;
   private appId: string;
   private appSecret: string;
+  private apiClient: FeishuApiClient;
   private messageHandler: MessageHandler | null = null;
   private botAddedHandler: BotAddedHandler | null = null;
   private messageRecalledHandler: MessageRecalledHandler | null = null;
@@ -186,6 +190,11 @@ export class FeishuClient {
   private isConnected = false;
   private documentReader: DocumentReader;
   private documentWriter: DocumentWriter;
+  private blockReader: BlockReader;
+  private blockWriter: BlockWriter;
+  private mediaUploader: MediaUploader;
+  private sheetReader: SheetReader;
+  private sheetWriter: SheetWriter;
 
   constructor(config: FeishuConfig) {
     this.appId = config.appId;
@@ -204,8 +213,19 @@ export class FeishuClient {
       loggerLevel: Lark.LoggerLevel.error,
     });
 
-    this.documentReader = new DocumentReader(this.client);
+    // 创建原生 API 客户端（用于绕过 SDK 的连接问题）
+    this.apiClient = new FeishuApiClient(config.appId, config.appSecret);
+
+    // 使用原生 API 客户端的模块
+    this.documentReader = new DocumentReader(this.apiClient);
+    
+    // 仍使用 SDK 的模块（这些暂时工作正常）
     this.documentWriter = new DocumentWriter(this.client);
+    this.blockReader = new BlockReader(this.client);
+    this.blockWriter = new BlockWriter(this.client);
+    this.mediaUploader = new MediaUploader(this.client);
+    this.sheetReader = new SheetReader(this.client);
+    this.sheetWriter = new SheetWriter(this.client);
   }
 
   /** 注册消息处理回调 */
@@ -898,52 +918,7 @@ export class FeishuClient {
   }
 
   async getMessageImage(messageId: string, imageKey: string): Promise<{ data: Buffer; mimeType: string } | null> {
-    const maxRetries = 3;
-    
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        const tokenResponse = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            app_id: this.appId,
-            app_secret: this.appSecret,
-          }),
-        });
-        
-        const tokenData = await tokenResponse.json() as { tenant_access_token?: string; code?: number; msg?: string };
-        if (!tokenData.tenant_access_token) {
-          logger.error('获取 access token 失败', { code: tokenData.code, msg: tokenData.msg });
-          return null;
-        }
-        
-        const url = `https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/resources/${imageKey}?type=image`;
-        
-        const response = await fetch(url, {
-          method: 'GET',
-          headers: { 'Authorization': `Bearer ${tokenData.tenant_access_token}` },
-        });
-        
-        if (!response.ok) {
-          logger.error('图片请求失败', { status: response.status, messageId, imageKey });
-          return null;
-        }
-        
-        const arrayBuffer = await response.arrayBuffer();
-        const data = Buffer.from(arrayBuffer);
-        const contentType = response.headers.get('content-type') || 'image/png';
-        
-        return { data, mimeType: contentType };
-      } catch (error) {
-        if (attempt === maxRetries) {
-          logger.error('获取消息图片失败', { messageId, imageKey, error });
-          return null;
-        }
-        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
-      }
-    }
-    
-    return null;
+    return this.apiClient.getMessageImage(messageId, imageKey);
   }
 
   setDefaultDocumentFolder(folderToken: string): void {
@@ -966,6 +941,163 @@ export class FeishuClient {
     return this.documentWriter.writeToDocument(urlOrToken, content);
   }
 
+  /** 追加内容到文档 */
+  async appendToDocument(urlOrToken: string, content: string): Promise<DocumentResult<void>> {
+    const parsed = parseDocumentUrl(urlOrToken);
+    if (parsed.type !== 'docx' && parsed.type !== 'doc') {
+      return { success: false, error: `不支持此类型文档: ${parsed.type}` };
+    }
+    return this.documentWriter.appendContent(parsed.token, content);
+  }
+
+  /** 替换文档内容 */
+  async replaceDocumentContent(urlOrToken: string, content: string): Promise<DocumentResult<void>> {
+    const parsed = parseDocumentUrl(urlOrToken);
+    if (parsed.type !== 'docx' && parsed.type !== 'doc') {
+      return { success: false, error: `不支持此类型文档: ${parsed.type}` };
+    }
+    return this.documentWriter.replaceContent(parsed.token, content);
+  }
+
+  /** 获取文档所有块 */
+  async getDocumentBlocks(urlOrToken: string): Promise<DocumentResult<DocumentBlock[]>> {
+    const parsed = parseDocumentUrl(urlOrToken);
+    if (parsed.type !== 'docx' && parsed.type !== 'doc') {
+      return { success: false, error: `不支持此类型文档: ${parsed.type}` };
+    }
+    return this.blockReader.getBlocks(parsed.token);
+  }
+
+  /** 创建文档块 */
+  async createDocumentBlocks(
+    urlOrToken: string,
+    blocks: CreateBlockData[],
+    parentBlockId?: string,
+    index?: number
+  ): Promise<DocumentResult<{ blockIds: string[] }>> {
+    const parsed = parseDocumentUrl(urlOrToken);
+    if (parsed.type !== 'docx' && parsed.type !== 'doc') {
+      return { success: false, error: `不支持此类型文档: ${parsed.type}` };
+    }
+    
+    let targetParentId = parentBlockId;
+    if (!targetParentId) {
+      const rootResult = await this.blockReader.getRootBlock(parsed.token);
+      if (!rootResult.success || !rootResult.data) {
+        return { success: false, error: rootResult.error || '获取根块失败' };
+      }
+      targetParentId = rootResult.data.blockId;
+    }
+    
+    return this.blockWriter.createChildren(parsed.token, targetParentId, blocks, index);
+  }
+
+  /** 上传图片到文档 */
+  async uploadDocumentImage(urlOrToken: string, imageData: Buffer, fileName?: string): Promise<DocumentResult<{ fileToken: string }>> {
+    const parsed = parseDocumentUrl(urlOrToken);
+    if (parsed.type !== 'docx' && parsed.type !== 'doc') {
+      return { success: false, error: `不支持此类型文档: ${parsed.type}` };
+    }
+    return this.mediaUploader.uploadImage(parsed.token, imageData, { fileName });
+  }
+
+  // ============ 电子表格方法 ============
+
+  /** 设置默认表格文件夹 */
+  setDefaultSheetFolder(folderToken: string): void {
+    this.sheetWriter.setDefaultFolder(folderToken);
+  }
+
+  /** 创建电子表格 */
+  async createSpreadsheet(options: CreateSpreadsheetOptions): Promise<SheetResult<SpreadsheetInfo>> {
+    return this.sheetWriter.createSpreadsheet(options);
+  }
+
+  /** 获取表格信息 */
+  async getSpreadsheetInfo(urlOrToken: string): Promise<SheetResult<SpreadsheetInfo>> {
+    return this.sheetReader.getSpreadsheetInfo(urlOrToken);
+  }
+
+  /** 获取所有工作表 */
+  async getSheets(urlOrToken: string): Promise<SheetResult<SheetInfo[]>> {
+    return this.sheetReader.getSheets(urlOrToken);
+  }
+
+  /** 读取表格数据 */
+  async readSheetData(urlOrToken: string, range: string): Promise<SheetResult<CellValue[][]>> {
+    return this.sheetReader.readRange(urlOrToken, range);
+  }
+
+  /** 写入表格数据 */
+  async writeSheetData(urlOrToken: string, range: string, values: CellValue[][]): Promise<SheetResult<{ updatedCells: number }>> {
+    const result = await this.sheetWriter.writeRange(urlOrToken, range, values);
+    if (result.success && result.data) {
+      return { success: true, data: { updatedCells: result.data.updatedCells } };
+    }
+    return { success: false, error: result.error };
+  }
+
+  /** 追加表格数据 */
+  async appendSheetData(urlOrToken: string, range: string, values: CellValue[][]): Promise<SheetResult<{ updatedCells: number }>> {
+    const result = await this.sheetWriter.appendData(urlOrToken, range, values);
+    if (result.success && result.data) {
+      return { success: true, data: { updatedCells: result.data.updatedCells } };
+    }
+    return { success: false, error: result.error };
+  }
+
+  /** 查找表格单元格 */
+  async findInSheet(urlOrToken: string, sheetId: string, query: string): Promise<SheetResult<string[]>> {
+    const result = await this.sheetReader.find(urlOrToken, sheetId, query);
+    if (result.success && result.data) {
+      return { success: true, data: result.data.matchedCells };
+    }
+    return { success: false, error: result.error };
+  }
+
+  /** 查找并替换表格内容 */
+  async replaceInSheet(urlOrToken: string, sheetId: string, find: string, replacement: string): Promise<SheetResult<number>> {
+    const result = await this.sheetWriter.replace(urlOrToken, sheetId, find, replacement);
+    if (result.success && result.data) {
+      return { success: true, data: result.data.replacedCount };
+    }
+    return { success: false, error: result.error };
+  }
+
+  /** 获取底层读写器（高级用法） */
+  getBlockReader(): BlockReader {
+    return this.blockReader;
+  }
+
+  getBlockWriter(): BlockWriter {
+    return this.blockWriter;
+  }
+
+  getMediaUploader(): MediaUploader {
+    return this.mediaUploader;
+  }
+
+  getSheetReader(): SheetReader {
+    return this.sheetReader;
+  }
+
+  getSheetWriter(): SheetWriter {
+    return this.sheetWriter;
+  }
+
+  /** 获取飞书 SDK 客户端（用于 SDK 原生调用） */
+  getLarkClient(): Lark.Client {
+    return this.client;
+  }
+
+  /** 获取原生 API 客户端（绕过 SDK 的 axios） */
+  getFeishuApiClient(): FeishuApiClient {
+    return this.apiClient;
+  }
+
+  /**
+   * @deprecated 使用 getLarkClient() 替代
+   */
   getApiClient(): Lark.Client {
     return this.client;
   }

@@ -253,7 +253,7 @@ export class CardStreamer {
       config: { wide_screen_mode: true },
       header: {
         title: { tag: 'plain_text', content: '错误' },
-        template: 'red',
+        template: 'carmine',  // 洋红：精致的错误警示
       },
       elements: [{
         tag: 'markdown',
