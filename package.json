@@ -1,6 +1,6 @@
 {
   "name": "opencode-bot",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "飞书机器人，用于与 OpenCode AI 编程助手交互",
   "type": "module",
   "main": "./dist/index.js",
